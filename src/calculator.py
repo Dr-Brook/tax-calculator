@@ -1,4 +1,4 @@
-"""Tax calculation logic for 1099/self-employment income."""
+"""Tax calculation logic for 1099/self-employment + W-2 mixed income."""
 
 from .counties import COUNTY_RATES
 
@@ -52,7 +52,7 @@ MD_BRACKETS_2025 = [
 ]
 
 SE_TAX_RATE = 0.153
-SE_WAGE_BASE = 0.9235  # 92.35% of net income subject to SE tax
+SE_WAGE_BASE = 0.9235  # 92.35% of net SE income subject to SE tax
 SL_INTEREST_MAX = 2500
 SL_PHASEOUT_START_SINGLE = 80000
 SL_PHASEOUT_END_SINGLE = 95000
@@ -78,11 +78,47 @@ MONTH_NAMES = [
 ]
 
 
-def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_year=2025, monthly_incomes=None):
+def _aggregate_entries(income_entries, expense_entries):
+    """Aggregate income/expense entry lists into totals by type.
+    
+    Returns: (total_1099_income, total_w2_income, total_1099_expenses, total_all_expenses)
+    
+    Business expenses are deducted from 1099 income only (TCJA rules).
+    """
+    total_1099 = 0.0
+    total_w2 = 0.0
+    total_1099_expenses = 0.0  # expenses deductible against 1099 income
+    total_all_expenses = 0.0
+
+    for entry in (income_entries or []):
+        amt = entry.get("amount", 0) or 0
+        if entry.get("employment_type") == "1099":
+            total_1099 += amt
+        else:
+            total_w2 += amt
+
+    for entry in (expense_entries or []):
+        amt = entry.get("amount", 0) or 0
+        total_all_expenses += amt
+        # All business expenses are deductible from 1099 income
+        # (under TCJA, W-2 employees can't deduct unreimbursed business expenses)
+        total_1099_expenses += amt
+
+    return total_1099, total_w2, total_1099_expenses, total_all_expenses
+
+
+def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_year=2025, monthly_data=None):
     """Full tax calculation returning a dict with all results.
     
-    monthly_incomes: optional dict of {month_index: income} for per-month income.
-    If provided, annual_gross is summed from individual months instead of monthly_income*12.
+    income_entries: list of dicts with keys: employment_type ("W-2" or "1099"), source (str), amount (float)
+    expense_entries: list of dicts with keys: category (str), amount (float), description (str)
+    sl_interest_annual: student loan interest paid per year
+    county: Maryland county name
+    tax_year: 2024 or 2025
+    monthly_data: optional dict of {month_index: {"income": [...entries], "expenses": [...entries]}}
+    
+    If monthly_data is provided, entries are summed across all months for annual totals.
+    If income_entries/expense_entries are provided directly, they represent annual totals.
     """
 
     brackets_fed = FED_BRACKETS_2025 if tax_year == 2025 else FED_BRACKETS_2024
@@ -90,51 +126,85 @@ def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_
     brackets_md = MD_BRACKETS_2025 if tax_year == 2025 else MD_BRACKETS_2024
     local_rate = COUNTY_RATES.get(county, 0.032)
 
-    # ── Annual figures ────────────────────────────────────────────
-    if monthly_incomes:
-        # Use per-month incomes
-        annual_gross = sum(monthly_incomes.values())
-        # Use average monthly for display purposes
-        avg_monthly_income = annual_gross / 12
-        annual_expenses = monthly_expenses * 12
-    else:
-        annual_gross = monthly_income * 12
-        avg_monthly_income = monthly_income
-        annual_expenses = monthly_expenses * 12
-    annual_net = annual_gross - annual_expenses
+    # ── Aggregate from monthly_data or from direct entries ───────
+    per_month = None
 
-    # Self-employment tax
-    se_taxable = annual_net * SE_WAGE_BASE
+    if monthly_data:
+        # Sum across all months
+        total_1099 = 0.0
+        total_w2 = 0.0
+        total_1099_expenses = 0.0
+        total_all_expenses = 0.0
+        per_month = []
+
+        for i in range(12):
+            m_data = monthly_data.get(i, {"income": [], "expenses": []})
+            m_inc = m_data.get("income", [])
+            m_exp = m_data.get("expenses", [])
+            m_1099, m_w2, m_exp1099, m_exp_all = _aggregate_entries(m_inc, m_exp)
+            total_1099 += m_1099
+            total_w2 += m_w2
+            total_1099_expenses += m_exp1099
+            total_all_expenses += m_exp_all
+
+            m_gross = m_1099 + m_w2
+            per_month.append({
+                "month": MONTH_NAMES[i],
+                "month_index": i,
+                "income_1099": m_1099,
+                "income_w2": m_w2,
+                "income": m_gross,
+                "expenses": m_exp_all,
+                "expenses_1099_ded": m_exp1099,
+            })
+
+        # For per-month tax calc, we'll compute annual first then pro-rate
+        annual_gross = total_1099 + total_w2
+        annual_expenses = total_all_expenses
+    else:
+        total_1099, total_w2, total_1099_expenses, total_all_expenses = _aggregate_entries(
+            income_entries, expense_entries
+        )
+        annual_gross = total_1099 + total_w2
+        annual_expenses = total_all_expenses
+
+    # ── 1099 net income (after business expenses) ────────────────
+    net_1099 = max(0, total_1099 - total_1099_expenses)
+
+    # ── Self-employment tax (only on 1099 income) ─────────────────
+    se_taxable = net_1099 * SE_WAGE_BASE
     se_tax = se_taxable * SE_TAX_RATE
     se_deduction = se_tax / 2  # deductible half
 
-    # Adjusted Gross Income
-    agi = annual_net - se_deduction
+    # ── Adjusted Gross Income ─────────────────────────────────────
+    # W-2 income is full amount, 1099 net minus half SE tax
+    agi = total_w2 + net_1099 - se_deduction
 
-    # Student loan interest deduction (phase-out)
+    # ── Student loan interest deduction (phase-out) ───────────────
     sl_deduction = min(sl_interest_annual, SL_INTEREST_MAX)
     if agi > SL_PHASEOUT_START_SINGLE:
         phase_out = min((agi - SL_PHASEOUT_START_SINGLE) / (SL_PHASEOUT_END_SINGLE - SL_PHASEOUT_START_SINGLE), 1.0)
         sl_deduction = max(sl_deduction * (1 - phase_out), 0)
 
-    # Taxable income (federal)
+    # ── Taxable income (federal) ──────────────────────────────────
     taxable_income = max(0, agi - sl_deduction - std_deduction)
 
-    # Federal income tax
+    # ── Federal income tax ────────────────────────────────────────
     federal_tax = _apply_brackets(taxable_income, brackets_fed)
 
-    # Maryland state tax
+    # ── Maryland state tax ────────────────────────────────────────
     md_tax = _apply_brackets(taxable_income, brackets_md)
 
-    # Local county tax
+    # ── Local county tax ──────────────────────────────────────────
     local_tax = taxable_income * local_rate
 
-    # Totals
+    # ── Totals ────────────────────────────────────────────────────
     total_tax = se_tax + federal_tax + md_tax + local_tax
+    annual_net = annual_gross - annual_expenses
     annual_take_home = annual_net - total_tax
     effective_rate = (total_tax / annual_net * 100) if annual_net > 0 else 0
 
-    # Quarterly payments
+    # ── Quarterly payments ─────────────────────────────────────────
     quarterly = total_tax / 4
 
     if tax_year == 2025:
@@ -142,33 +212,26 @@ def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_
     else:
         q_dates = ["Apr 15, 2024", "Jun 15, 2024", "Sep 15, 2024", "Jan 15, 2025"]
 
-    # Monthly breakdown
+    # ── Monthly averages ──────────────────────────────────────────
     monthly_take_home = annual_take_home / 12
+    avg_monthly_income = annual_gross / 12
 
-    # Per-month breakdown if monthly_incomes provided
-    per_month = None
-    if monthly_incomes:
-        per_month = []
-        for i in range(12):
-            mi = monthly_incomes.get(i, monthly_income)
-            me = monthly_expenses
-            m_net = mi - me
+    # ── Per-month tax allocation ──────────────────────────────────
+    if per_month:
+        for m in per_month:
+            m_gross = m["income"]
+            m_exp = m["expenses"]
+            m_net = m_gross - m_exp
             # Pro-rate annual taxes by income share
-            share = mi / annual_gross if annual_gross > 0 else 1/12
+            share = m_gross / annual_gross if annual_gross > 0 else 1 / 12
             m_tax = total_tax * share
             m_take_home = m_net - m_tax
-            per_month.append({
-                "month": MONTH_NAMES[i],
-                "month_index": i,
-                "income": mi,
-                "expenses": me,
-                "net": m_net,
-                "tax": m_tax,
-                "take_home": m_take_home,
-                "effective_rate": (m_tax / m_net * 100) if m_net > 0 else 0,
-            })
+            m["net"] = m_net
+            m["tax"] = m_tax
+            m["take_home"] = m_take_home
+            m["effective_rate"] = (m_tax / m_net * 100) if m_net > 0 else 0
 
-    # Federal bracket breakdown for visualization
+    # ── Federal bracket breakdown for visualization ──────────────
     fed_bracket_detail = []
     prev = 0
     for ceiling, rate in brackets_fed:
@@ -186,9 +249,9 @@ def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_
         prev = ceiling
 
     return {
-        # Monthly
-        "monthly_income": monthly_income,
-        "monthly_expenses": monthly_expenses,
+        # Monthly averages
+        "monthly_income": avg_monthly_income,
+        "monthly_expenses": annual_expenses / 12,
         "monthly_net": annual_net / 12,
         "monthly_se_tax": se_tax / 12,
         "monthly_federal_tax": federal_tax / 12,
@@ -200,6 +263,12 @@ def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_
         "annual_gross": annual_gross,
         "annual_expenses": annual_expenses,
         "annual_net": annual_net,
+        # Breakdown
+        "total_1099_income": total_1099,
+        "total_w2_income": total_w2,
+        "net_1099_income": net_1099,
+        "total_1099_expenses": total_1099_expenses,
+        # Tax components
         "se_tax": se_tax,
         "se_deduction": se_deduction,
         "agi": agi,
