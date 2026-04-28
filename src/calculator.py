@@ -71,8 +71,19 @@ def _apply_brackets(income, brackets):
     return tax
 
 
-def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_year=2025):
-    """Full tax calculation returning a dict with all results."""
+MONTH_NAMES = [
+    "January", "February", "March", "April",
+    "May", "June", "July", "August",
+    "September", "October", "November", "December"
+]
+
+
+def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_year=2025, monthly_incomes=None):
+    """Full tax calculation returning a dict with all results.
+    
+    monthly_incomes: optional dict of {month_index: income} for per-month income.
+    If provided, annual_gross is summed from individual months instead of monthly_income*12.
+    """
 
     brackets_fed = FED_BRACKETS_2025 if tax_year == 2025 else FED_BRACKETS_2024
     std_deduction = STD_DEDUCTION_2025 if tax_year == 2025 else STD_DEDUCTION_2024
@@ -80,8 +91,16 @@ def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_
     local_rate = COUNTY_RATES.get(county, 0.032)
 
     # ── Annual figures ────────────────────────────────────────────
-    annual_gross = monthly_income * 12
-    annual_expenses = monthly_expenses * 12
+    if monthly_incomes:
+        # Use per-month incomes
+        annual_gross = sum(monthly_incomes.values())
+        # Use average monthly for display purposes
+        avg_monthly_income = annual_gross / 12
+        annual_expenses = monthly_expenses * 12
+    else:
+        annual_gross = monthly_income * 12
+        avg_monthly_income = monthly_income
+        annual_expenses = monthly_expenses * 12
     annual_net = annual_gross - annual_expenses
 
     # Self-employment tax
@@ -125,6 +144,29 @@ def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_
 
     # Monthly breakdown
     monthly_take_home = annual_take_home / 12
+
+    # Per-month breakdown if monthly_incomes provided
+    per_month = None
+    if monthly_incomes:
+        per_month = []
+        for i in range(12):
+            mi = monthly_incomes.get(i, monthly_income)
+            me = monthly_expenses
+            m_net = mi - me
+            # Pro-rate annual taxes by income share
+            share = mi / annual_gross if annual_gross > 0 else 1/12
+            m_tax = total_tax * share
+            m_take_home = m_net - m_tax
+            per_month.append({
+                "month": MONTH_NAMES[i],
+                "month_index": i,
+                "income": mi,
+                "expenses": me,
+                "net": m_net,
+                "tax": m_tax,
+                "take_home": m_take_home,
+                "effective_rate": (m_tax / m_net * 100) if m_net > 0 else 0,
+            })
 
     # Federal bracket breakdown for visualization
     fed_bracket_detail = []
@@ -175,6 +217,9 @@ def calculate(monthly_income, monthly_expenses, sl_interest_annual, county, tax_
         "q_dates": q_dates,
         # Visualization
         "fed_bracket_detail": fed_bracket_detail,
+        # Per-month data
+        "per_month": per_month,
+        "avg_monthly_income": avg_monthly_income,
         # Meta
         "county": county,
         "local_rate": local_rate,

@@ -76,7 +76,26 @@ with st.sidebar:
     last_inputs = last_saved.get("inputs", {}) if last_saved else {}
 
     tax_year = st.selectbox("Tax Year", [2025, 2024], index=[2025, 2024].index(last_inputs.get("tax_year", 2025)))
-    monthly_income = st.number_input("Monthly gross income ($)", min_value=0, value=last_inputs.get("monthly_income", 8000), step=500)
+    
+    income_mode = st.radio("Income Entry", ["Same each month", "Per month"], index=0, horizontal=True)
+    
+    if income_mode == "Same each month":
+        monthly_income = st.number_input("Monthly gross income ($)", min_value=0, value=last_inputs.get("monthly_income", 8000), step=500)
+        monthly_incomes = None
+    else:
+        st.caption("Enter your 1099 income for each month:")
+        monthly_incomes = {}
+        default_income = last_inputs.get("monthly_income", 8000)
+        saved_months = last_inputs.get("monthly_incomes", {})
+        month_cols = st.columns(3)
+        month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+        for i, month in enumerate(month_names):
+            col = month_cols[i % 3]
+            default_val = saved_months.get(str(i), default_income)
+            val = col.number_input(f"{month[:3]}", min_value=0, value=default_val, step=500, key=f"month_{i}")
+            monthly_incomes[i] = val
+        monthly_income = sum(monthly_incomes.values()) / 12  # average for fallback
+    
     monthly_expenses = st.number_input("Monthly business expenses ($)", min_value=0, value=last_inputs.get("monthly_expenses", 200), step=100)
     sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=last_inputs.get("sl_interest", 2500), step=100)
     county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(last_inputs.get("county", "Montgomery")))
@@ -84,14 +103,18 @@ with st.sidebar:
 
     # Save button
     if st.button("💾 Save Calculation", use_container_width=True, type="primary"):
+        inputs_to_save = {
+            "tax_year": tax_year,
+            "monthly_income": monthly_income,
+            "monthly_expenses": monthly_expenses,
+            "sl_interest": sl_interest,
+            "county": county,
+            "income_mode": income_mode,
+        }
+        if monthly_incomes:
+            inputs_to_save["monthly_incomes"] = {str(k): v for k, v in monthly_incomes.items()}
         save_data({
-            "inputs": {
-                "tax_year": tax_year,
-                "monthly_income": monthly_income,
-                "monthly_expenses": monthly_expenses,
-                "sl_interest": sl_interest,
-                "county": county,
-            },
+            "inputs": inputs_to_save,
             "results": r if 'r' in dir() else {},
         })
         st.success("✅ Saved! Your data will be here next time you open the app.")
@@ -108,27 +131,62 @@ with st.sidebar:
                 st.rerun()
 
 # ── Calculate ─────────────────────────────────────────────────────
-r = calculate(monthly_income, monthly_expenses, sl_interest, county, tax_year)
+if monthly_incomes:
+    r = calculate(monthly_income, monthly_expenses, sl_interest, county, tax_year, monthly_incomes=monthly_incomes)
+else:
+    r = calculate(monthly_income, monthly_expenses, sl_interest, county, tax_year)
 
 def fmt(v): return f"${v:,.0f}" if abs(v) >= 1 else f"${v:,.2f}"
 
 # ── Monthly report cards ───────────────────────────────────────────
 st.markdown('<p class="section-title">Monthly Overview</p>', unsafe_allow_html=True)
 cols = st.columns(4)
+if monthly_incomes:
+    avg_income = r["avg_monthly_income"]
+else:
+    avg_income = r["monthly_income"]
 cards = [
     ("Take-Home", fmt(r["monthly_take_home"]), "per month after all taxes"),
     ("Total Tax", fmt(r["monthly_total_tax"]), f"effective rate {r['effective_rate']:.1f}%"),
-    ("Net Income", fmt(r["monthly_net"]), "gross minus expenses"),
+    ("Avg Monthly Income", fmt(avg_income), "gross income" if not monthly_incomes else "average across months"),
     ("Self-Employment Tax", fmt(r["monthly_se_tax"]), "Social Security + Medicare"),
 ]
 for col, (title, value, sub) in zip(cols, cards):
     col.markdown(f"""<div class="card"><h3>{title}</h3><div class="value">{value}</div><div class="sub">{sub}</div></div>""", unsafe_allow_html=True)
 
+# ── Per-month breakdown ────────────────────────────────────────────
+if r.get("per_month"):
+    st.markdown('<p class="section-title">Monthly Income Breakdown</p>', unsafe_allow_html=True)
+    import pandas as pd
+    pm_df = pd.DataFrame(r["per_month"])
+    st.dataframe(
+        pm_df[["month", "income", "expenses", "net", "tax", "take_home"]].rename(columns={
+            "month": "Month", "income": "Income", "expenses": "Expenses",
+            "net": "Net", "tax": "Tax", "take_home": "Take-Home"
+        }),
+        use_container_width=True,
+        column_config={
+            "Income": st.column_config.NumberColumn(format="$%,d"),
+            "Expenses": st.column_config.NumberColumn(format="$%,d"),
+            "Net": st.column_config.NumberColumn(format="$%,d"),
+            "Tax": st.column_config.NumberColumn(format="$%,d"),
+            "Take-Home": st.column_config.NumberColumn(format="$%,d"),
+        },
+        hide_index=True,
+    )
+    # Monthly income chart
+    import plotly.graph_objects as go
+    fig_monthly = go.Figure()
+    fig_monthly.add_trace(go.Bar(x=[m["month"][:3] for m in r["per_month"]], y=[m["income"] for m in r["per_month"]], name="Income", marker_color="#0D7377"))
+    fig_monthly.add_trace(go.Bar(x=[m["month"][:3] for m in r["per_month"]], y=[m["take_home"] for m in r["per_month"]], name="Take-Home", marker_color="#14A3A8"))
+    fig_monthly.update_layout(title="Monthly Income vs Take-Home", barmode="group", height=350, margin=dict(l=0, r=0, t=40, b=0))
+    st.plotly_chart(fig_monthly, use_container_width=True)
+
 # ── Step-by-step calculation ──────────────────────────────────────
 st.markdown('<p class="section-title">Step-by-Step Calculation (Annual)</p>', unsafe_allow_html=True)
 
 steps = [
-    ("Gross income", fmt(r["annual_gross"]), f"({fmt(r['monthly_income'])} × 12)"),
+    ("Gross income", fmt(r["annual_gross"]), f"({fmt(r['avg_monthly_income'])} avg/mo × 12)" if monthly_incomes else f"({fmt(r['monthly_income'])} × 12)"),
     ("Business expenses", fmt(r["annual_expenses"]), f"({fmt(r['monthly_expenses'])} × 12)"),
     ("Net income", fmt(r["annual_net"]), "gross − expenses"),
     ("Self-employment tax (15.3% × 92.35%)", fmt(r["se_tax"]), f"on {fmt(r['annual_net'] * 0.9235)} taxable base"),
