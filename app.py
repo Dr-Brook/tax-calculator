@@ -297,6 +297,36 @@ else:
 
 def fmt(v): return f"${v:,.0f}" if abs(v) >= 1 else f"${v:,.2f}"
 
+# ── Set Aside Banner (per-month view) ───────────────────────────────
+if current_month is not None and r.get("per_month"):
+    m = r["per_month"][current_month]
+    if m["income"] > 0:
+        st.markdown(f"""
+        <div class="card" style="border-left:4px solid #f59e0b;background:#fffbeb">
+            <h3>💰 Set Aside This Month ({m['month']})</h3>
+            <div class="value" style="color:#d97706">{fmt(m['set_aside'])}</div>
+            <div class="sub">Put this aside for taxes — SE: {fmt(m.get('se_tax',0))} | Fed: {fmt(m.get('federal_tax',0))} | MD: {fmt(m.get('md_tax',0))} | Local: {fmt(m.get('local_tax',0))}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="card" style="border-left:4px solid #9ca3af;background:#f9fafb">
+            <h3>💰 No income for {m['month']}</h3>
+            <div class="sub">Add income entries above to see how much to set aside.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ── Annual set-aside summary ────────────────────────────────────────
+if r.get("per_month"):
+    total_set_aside = sum(m.get("set_aside", 0) for m in r["per_month"])
+    st.markdown(f"""
+    <div class="card" style="border-left:4px solid #f59e0b">
+        <h3>💰 Total to Set Aside (Year)</h3>
+        <div class="value" style="color:#d97706">{fmt(total_set_aside)}</div>
+        <div class="sub">Monthly avg: {fmt(total_set_aside/12)} — covers SE + Federal + MD + Local</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 
 # ── Monthly report cards ───────────────────────────────────────────
 st.markdown('<p class="section-title">Monthly Overview</p>', unsafe_allow_html=True)
@@ -330,9 +360,12 @@ if r.get("per_month"):
                     "Month": m["month"][:3],
                     "1099": m.get("income_1099", 0),
                     "W-2": m.get("income_w2", 0),
-                    "Total Income": m["income"],
                     "Expenses": m["expenses"],
-                    "Tax": m["tax"],
+                    "SE Tax": m.get("se_tax", 0),
+                    "Fed Tax": m.get("federal_tax", 0),
+                    "MD Tax": m.get("md_tax", 0),
+                    "Local Tax": m.get("local_tax", 0),
+                    "💰 Set Aside": m.get("set_aside", m["tax"]),
                     "Take-Home": m["take_home"],
                 })
         if pm_rows:

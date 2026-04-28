@@ -218,18 +218,29 @@ def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_y
 
     # ── Per-month tax allocation ──────────────────────────────────
     if per_month:
+        # Calculate the effective marginal rate once
+        marginal_rate = total_tax / annual_gross if annual_gross > 0 else 0
         for m in per_month:
             m_gross = m["income"]
             m_exp = m["expenses"]
             m_net = m_gross - m_exp
-            # Pro-rate annual taxes by income share
+            # Pro-rate each tax component by income share
             share = m_gross / annual_gross if annual_gross > 0 else 1 / 12
-            m_tax = total_tax * share
+            m_se_tax = se_tax * share
+            m_federal_tax = federal_tax * share
+            m_md_tax = md_tax * share
+            m_local_tax = local_tax * share
+            m_tax = m_se_tax + m_federal_tax + m_md_tax + m_local_tax
             m_take_home = m_net - m_tax
             m["net"] = m_net
             m["tax"] = m_tax
+            m["se_tax"] = m_se_tax
+            m["federal_tax"] = m_federal_tax
+            m["md_tax"] = m_md_tax
+            m["local_tax"] = m_local_tax
             m["take_home"] = m_take_home
             m["effective_rate"] = (m_tax / m_net * 100) if m_net > 0 else 0
+            m["set_aside"] = m_tax  # how much to put aside this month
 
     # ── Federal bracket breakdown for visualization ──────────────
     fed_bracket_detail = []
