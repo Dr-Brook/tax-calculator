@@ -1,6 +1,41 @@
 import streamlit as st
+import json
+from pathlib import Path
+from datetime import datetime
 from src.calculator import calculate
 from src.counties import COUNTY_RATES
+
+# ── Data persistence ─────────────────────────────────────────────
+SAVE_FILE = Path(__file__).parent / "data" / "saved_data.json"
+
+def load_saved_data():
+    """Load previously saved input data."""
+    if SAVE_FILE.exists():
+        try:
+            return json.loads(SAVE_FILE.read_text())
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return {}
+
+def save_data(data: dict):
+    """Save input data and calculation results locally."""
+    SAVE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing = load_saved_data()
+    # Store by date key so we keep history
+    date_key = datetime.now().strftime("%Y-%m-%d")
+    existing[date_key] = {
+        "inputs": data["inputs"],
+        "results": data["results"],
+        "saved_at": datetime.now().isoformat(),
+    }
+    # Keep last 50 entries
+    if len(existing) > 50:
+        keys = sorted(existing.keys())
+        for k in keys[:-50]:
+            del existing[k]
+    SAVE_FILE.write_text(json.dumps(existing, indent=2))
+
+SAVED = load_saved_data()
 
 # ── Page config ────────────────────────────────────────────────────
 st.set_page_config(page_title="1099 Tax Calculator", page_icon="🧮", layout="wide")
@@ -35,12 +70,42 @@ st.markdown("""<div class="header-bar"><h1>🧮 1099 / Self-Employment Tax Calcu
 # ── Sidebar inputs ─────────────────────────────────────────────────
 with st.sidebar:
     st.header("📊 Your Info")
-    tax_year = st.selectbox("Tax Year", [2025, 2024], index=0)
-    monthly_income = st.number_input("Monthly gross income ($)", min_value=0, value=8000, step=500)
-    monthly_expenses = st.number_input("Monthly business expenses ($)", min_value=0, value=200, step=100)
-    sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=2500, step=100)
-    county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index("Montgomery"))
+
+    # Load last saved values as defaults
+    last_saved = SAVED.get(sorted(SAVED.keys())[-1], {}) if SAVED else {}
+    last_inputs = last_saved.get("inputs", {}) if last_saved else {}
+
+    tax_year = st.selectbox("Tax Year", [2025, 2024], index=[2025, 2024].index(last_inputs.get("tax_year", 2025)))
+    monthly_income = st.number_input("Monthly gross income ($)", min_value=0, value=last_inputs.get("monthly_income", 8000), step=500)
+    monthly_expenses = st.number_input("Monthly business expenses ($)", min_value=0, value=last_inputs.get("monthly_expenses", 200), step=100)
+    sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=last_inputs.get("sl_interest", 2500), step=100)
+    county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(last_inputs.get("county", "Montgomery")))
     st.caption(f"Local tax rate: {COUNTY_RATES[county]*100:.2f}%")
+
+    # Save button
+    if st.button("💾 Save Calculation", use_container_width=True, type="primary"):
+        save_data({
+            "inputs": {
+                "tax_year": tax_year,
+                "monthly_income": monthly_income,
+                "monthly_expenses": monthly_expenses,
+                "sl_interest": sl_interest,
+                "county": county,
+            },
+            "results": r if 'r' in dir() else {},
+        })
+        st.success("✅ Saved! Your data will be here next time you open the app.")
+
+    # History
+    if SAVED:
+        st.markdown("---")
+        st.markdown("#### 📜 History")
+        for date_key in sorted(SAVED.keys(), reverse=True)[:5]:
+            entry = SAVED[date_key]
+            inp = entry.get("inputs", {})
+            if st.button(f"{date_key} — ${inp.get('monthly_income', 0):,}/mo", key=f"load_{date_key}"):
+                st.session_state["loaded_date"] = date_key
+                st.rerun()
 
 # ── Calculate ─────────────────────────────────────────────────────
 r = calculate(monthly_income, monthly_expenses, sl_interest, county, tax_year)
