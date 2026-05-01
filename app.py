@@ -22,12 +22,18 @@ MONTH_NAMES = [
 
 
 def load_custom_sources():
+    defaults = {"income_sources": list(DEFAULT_INCOME_SOURCES), "expense_categories": list(DEFAULT_EXPENSE_CATEGORIES)}
     if CUSTOM_FILE.exists():
         try:
-            return json.loads(CUSTOM_FILE.read_text())
+            data = json.loads(CUSTOM_FILE.read_text())
+            # Merge: keep defaults for any missing keys or empty lists
+            for key in ["income_sources", "expense_categories"]:
+                if key not in data or not data.get(key):
+                    data[key] = defaults[key]
+            return data
         except (json.JSONDecodeError, KeyError):
             pass
-    return {"income_sources": list(DEFAULT_INCOME_SOURCES), "expense_categories": list(DEFAULT_EXPENSE_CATEGORIES)}
+    return defaults
 
 
 def save_custom_sources(data):
