@@ -389,12 +389,8 @@ else:
 income_entries = st.session_state.income_entries
 expense_entries = st.session_state.expense_entries
 
-if not income_entries:
-    st.info("👆 Add your income sources above to see your tax calculation.")
-    st.stop()
-
 monthly_data = st.session_state.monthly_data
-# Check if any monthly data has entries
+# Always calculate based on ALL monthly data for accurate annual tax
 has_monthly_data = any(
     m.get("income") or m.get("expenses")
     for m in monthly_data.values()
@@ -402,14 +398,17 @@ has_monthly_data = any(
 
 if has_monthly_data:
     r = calculate([], [], sl_interest, county, tax_year, monthly_data=monthly_data)
-else:
+elif income_entries:
     r = calculate(income_entries, expense_entries, sl_interest, county, tax_year)
+else:
+    st.info("👆 Add your income sources above to see your tax calculation.")
+    st.stop()
 
 
 def fmt(v): return f"${v:,.0f}" if abs(v) >= 1 else f"${v:,.2f}"
 
 # ── Set Aside Banner (per-month view) ───────────────────────────────
-if current_month is not None and r.get("per_month"):
+if current_month is not None and r.get("per_month") and r["annual_gross"] > 0:
     m = r["per_month"][current_month]
     if m["income"] > 0:
         st.markdown(f"""
@@ -423,7 +422,7 @@ if current_month is not None and r.get("per_month"):
         st.markdown(f"""
         <div class="card" style="border-left:4px solid #9ca3af;background:#f9fafb">
             <h3>💰 No income for {m['month']}</h3>
-            <div class="sub">Add income entries above to see how much to set aside.</div>
+            <div class="sub">Your annual tax is still calculated from all months combined.</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -439,14 +438,14 @@ if r.get("per_month"):
     """, unsafe_allow_html=True)
 
 
-# ── Monthly report cards ───────────────────────────────────────────
-st.markdown('<p class="section-title">Monthly Overview</p>', unsafe_allow_html=True)
+# ── Annual summary cards ────────────────────────────────────────────
+st.markdown('<p class="section-title">Annual Tax Summary</p>', unsafe_allow_html=True)
 cols = st.columns(4)
 cards = [
-    ("Take-Home", fmt(r["monthly_take_home"]), "per month after all taxes"),
-    ("Total Tax", fmt(r["monthly_total_tax"]), f"effective rate {r['effective_rate']:.1f}%"),
-    ("Avg Monthly Income", fmt(r["avg_monthly_income"]), "gross income"),
-    ("Self-Employment Tax", fmt(r["monthly_se_tax"]), "Social Security + Medicare"),
+    ("Annual Take-Home", fmt(r["annual_take_home"]), f"after all taxes, {r['effective_rate']:.1f}% rate"),
+    ("Total Annual Tax", fmt(r["total_tax"]), "SE + Fed + MD + Local"),
+    ("Monthly Take-Home", fmt(r["monthly_take_home"]), "annual ÷ 12"),
+    ("Monthly Set-Aside", fmt(r["monthly_total_tax"]), "for tax payments"),
 ]
 for col, (title, value, sub) in zip(cols, cards):
     col.markdown(f"""<div class="card"><h3>{title}</h3><div class="value">{value}</div><div class="sub">{sub}</div></div>""", unsafe_allow_html=True)
@@ -506,6 +505,7 @@ if r.get("per_month"):
 
 # ── Step-by-step calculation ──────────────────────────────────────
 st.markdown('<p class="section-title">Step-by-Step Calculation (Annual)</p>', unsafe_allow_html=True)
+st.caption("All figures below are annual totals. Your monthly set-aside = annual tax ÷ 12.")
 
 from src.calculator import SL_PHASEOUT_START_SINGLE
 
