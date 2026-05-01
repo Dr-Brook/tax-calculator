@@ -10,7 +10,9 @@ DATA_DIR = Path(__file__).parent / "data"
 SAVE_FILE = DATA_DIR / "saved_data.json"
 CUSTOM_FILE = DATA_DIR / "custom_sources.json"
 
-DEFAULT_INCOME_SOURCES = ["Uber", "Empower", "Square", "Lyft", "FT Work", "PT Work", "Other"]
+DEFAULT_INCOME_SOURCES = ["Uber", "Empower", "Square", "Lyft", "FT Work", "PT Work", "Taxi", "Other"]
+MILEAGE_ELIGIBLE_SOURCES = {"Uber", "Lyft", "Empower", "Taxi"}
+IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70}
 DEFAULT_EXPENSE_CATEGORIES = ["Subscription", "Other"]
 MONTH_NAMES = [
     "January", "February", "March", "April",
@@ -183,34 +185,67 @@ with st.expander("➕ Add Income", expanded=True):
     new_amount = add_cols[2].number_input("Amount ($)", min_value=0, value=0, step=100, key="new_inc_amount", label_visibility="collapsed")
     add_clicked = add_cols[3].button("➕", key="add_inc_btn")
 
+    # Mileage input for rideshare/driving sources
+    new_mileage = 0
+    if new_source in MILEAGE_ELIGIBLE_SOURCES and new_type == "1099":
+        mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
+        new_mileage = st.number_input(
+            f"🚗 Miles driven for {new_source} (deduction: ${mileage_rate:.2f}/mile)",
+            min_value=0, value=0, step=100, key="new_inc_mileage"
+        )
+
     if new_source == "Other":
         custom_source = st.text_input("Custom source name", key="custom_inc_source")
+        is_mileage_eligible = custom_source.strip() in MILEAGE_ELIGIBLE_SOURCES if custom_source.strip() else False
+        if is_mileage_eligible and new_type == "1099":
+            mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
+            new_mileage = st.number_input(
+                f"🚗 Miles driven for {custom_source.strip()} (deduction: ${mileage_rate:.2f}/mile)",
+                min_value=0, value=0, step=100, key="custom_inc_mileage"
+            )
         if add_clicked and custom_source.strip():
             if custom_source.strip() not in income_sources:
                 CUSTOM["income_sources"] = income_sources + [custom_source.strip()]
                 save_custom_sources(CUSTOM)
-            st.session_state.income_entries.append({
+            entry = {
                 "employment_type": new_type,
                 "source": custom_source.strip(),
                 "amount": new_amount,
-            })
+            }
+            mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
+            if new_type == "1099" and (custom_source.strip() in MILEAGE_ELIGIBLE_SOURCES or is_mileage_eligible):
+                entry["miles"] = new_mileage
+                entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
+            st.session_state.income_entries.append(entry)
             st.rerun()
     elif add_clicked and new_amount > 0:
-        st.session_state.income_entries.append({
+        entry = {
             "employment_type": new_type,
             "source": new_source,
             "amount": new_amount,
-        })
+        }
+        if new_source in MILEAGE_ELIGIBLE_SOURCES and new_type == "1099" and new_mileage > 0:
+            mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
+            entry["miles"] = new_mileage
+            entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
+        st.session_state.income_entries.append(entry)
         st.rerun()
 
 # Display income entries
 for i, entry in enumerate(st.session_state.income_entries):
-    cols = st.columns([1, 2, 2, 1])
+    cols = st.columns([1, 2, 2, 1, 1])
     type_color = "#16a34a" if entry["employment_type"] == "1099" else "#2563eb"
     cols[0].markdown(f'<span style="color:{type_color};font-weight:600">{entry["employment_type"]}</span>', unsafe_allow_html=True)
-    cols[1].write(entry["source"])
+    src_label = entry["source"]
+    if entry.get("miles", 0) > 0:
+        src_label += f' 🚗{entry["miles"]:,.0f}mi'
+    cols[1].markdown(f'{src_label}')
     cols[2].write(f"${entry['amount']:,.0f}")
-    if cols[3].button("🗑️", key=f"del_inc_{i}"):
+    if entry.get("mileage_deduction", 0) > 0:
+        cols[3].caption(f'−${entry["mileage_deduction"]:,.0f} mileage')
+    else:
+        cols[3].write("")
+    if cols[4].button("🗑️", key=f"del_inc_{i}"):
         st.session_state.income_entries.pop(i)
         st.rerun()
 
@@ -347,6 +382,18 @@ inc_cols[0].metric("1099 Income", fmt(r["total_1099_income"]), f"net: {fmt(r['ne
 inc_cols[1].metric("W-2 Income", fmt(r["total_w2_income"]), "no SE tax")
 inc_cols[2].metric("SE Tax", fmt(r["se_tax"]), "15.3% × 92.35%")
 
+# Mileage deduction summary
+if r.get("mileage_deduction_total", 0) > 0:
+    mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
+    total_miles = sum(e.get("miles", 0) or 0 for e in st.session_state.income_entries if e.get("employment_type") == "1099")
+    st.markdown(f"""
+    <div class="card" style="border-left:4px solid #0D7377">
+        <h3>🚗 Mileage Deduction</h3>
+        <div class="value">−{fmt(r['mileage_deduction_total'])}</div>
+        <div class="sub">{total_miles:,.0f} miles × ${mileage_rate:.2f}/mile (IRS {tax_year} rate) — deducted from 1099 income</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 # ── Per-month breakdown ────────────────────────────────────────────
 if r.get("per_month"):
     has_monthly_variety = any(m.get("income", 0) > 0 for m in r["per_month"])
@@ -390,7 +437,7 @@ steps = [
     ("1099 gross income", fmt(r["total_1099_income"]), "self-employment"),
     ("W-2 income", fmt(r["total_w2_income"]), "employer payroll"),
     ("Total gross income", fmt(r["annual_gross"]), "1099 + W-2"),
-    ("Business expenses", fmt(r["annual_expenses"]), "deductible from 1099"),
+    ("Business expenses", fmt(r["annual_expenses"]), "deductible from 1099" + (f" (incl. ${r['mileage_deduction_total']:,.0f} mileage)" if r.get('mileage_deduction_total', 0) > 0 else "")),
     ("1099 net income", fmt(r["net_1099_income"]), "1099 − expenses"),
     ("Self-employment tax (15.3% × 92.35%)", fmt(r["se_tax"]), f"on {fmt(r['net_1099_income'] * 0.9235)} taxable base"),
     ("½ SE tax deduction", f"−{fmt(r['se_deduction'])}", "deductible from income"),

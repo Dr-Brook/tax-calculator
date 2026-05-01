@@ -56,6 +56,7 @@ SE_WAGE_BASE = 0.9235  # 92.35% of net SE income subject to SE tax
 SL_INTEREST_MAX = 2500
 SL_PHASEOUT_START_SINGLE = 80000
 SL_PHASEOUT_END_SINGLE = 95000
+IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70}  # cents per mile
 
 
 def _apply_brackets(income, brackets):
@@ -89,11 +90,17 @@ def _aggregate_entries(income_entries, expense_entries):
     total_w2 = 0.0
     total_1099_expenses = 0.0  # expenses deductible against 1099 income
     total_all_expenses = 0.0
+    total_mileage_deduction = 0.0
 
     for entry in (income_entries or []):
         amt = entry.get("amount", 0) or 0
         if entry.get("employment_type") == "1099":
             total_1099 += amt
+            # Mileage deduction for 1099 rideshare/driving income
+            mileage_ded = entry.get("mileage_deduction", 0) or 0
+            total_mileage_deduction += mileage_ded
+            total_1099_expenses += mileage_ded
+            total_all_expenses += mileage_ded
         else:
             total_w2 += amt
 
@@ -104,7 +111,7 @@ def _aggregate_entries(income_entries, expense_entries):
         # (under TCJA, W-2 employees can't deduct unreimbursed business expenses)
         total_1099_expenses += amt
 
-    return total_1099, total_w2, total_1099_expenses, total_all_expenses
+    return total_1099, total_w2, total_1099_expenses, total_all_expenses, total_mileage_deduction
 
 
 def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_year=2025, monthly_data=None):
@@ -135,17 +142,19 @@ def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_y
         total_w2 = 0.0
         total_1099_expenses = 0.0
         total_all_expenses = 0.0
+        total_mileage_deduction = 0.0
         per_month = []
 
         for i in range(12):
             m_data = monthly_data.get(i, {"income": [], "expenses": []})
             m_inc = m_data.get("income", [])
             m_exp = m_data.get("expenses", [])
-            m_1099, m_w2, m_exp1099, m_exp_all = _aggregate_entries(m_inc, m_exp)
+            m_1099, m_w2, m_exp1099, m_exp_all, m_mileage = _aggregate_entries(m_inc, m_exp)
             total_1099 += m_1099
             total_w2 += m_w2
             total_1099_expenses += m_exp1099
             total_all_expenses += m_exp_all
+            total_mileage_deduction += m_mileage
 
             m_gross = m_1099 + m_w2
             per_month.append({
@@ -156,20 +165,24 @@ def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_y
                 "income": m_gross,
                 "expenses": m_exp_all,
                 "expenses_1099_ded": m_exp1099,
+                "mileage_deduction": m_mileage,
             })
 
         # For per-month tax calc, we'll compute annual first then pro-rate
         annual_gross = total_1099 + total_w2
         annual_expenses = total_all_expenses
     else:
-        total_1099, total_w2, total_1099_expenses, total_all_expenses = _aggregate_entries(
+        total_1099, total_w2, total_1099_expenses, total_all_expenses, total_mileage_deduction = _aggregate_entries(
             income_entries, expense_entries
         )
         annual_gross = total_1099 + total_w2
         annual_expenses = total_all_expenses
 
-    # ── 1099 net income (after business expenses) ────────────────
+    # ── 1099 net income (after business expenses including mileage) ─
     net_1099 = max(0, total_1099 - total_1099_expenses)
+
+    # ── Mileage deduction summary (for display) ──────────────────
+    mileage_deduction_total = total_mileage_deduction
 
     # ── Self-employment tax (only on 1099 income) ─────────────────
     se_taxable = net_1099 * SE_WAGE_BASE
@@ -279,6 +292,7 @@ def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_y
         "total_w2_income": total_w2,
         "net_1099_income": net_1099,
         "total_1099_expenses": total_1099_expenses,
+        "mileage_deduction_total": mileage_deduction_total,
         # Tax components
         "se_tax": se_tax,
         "se_deduction": se_deduction,
