@@ -127,22 +127,29 @@ with st.sidebar:
     else:
         st.session_state.current_month = MONTH_NAMES.index(month_mode)
 
-    # Load month data into working entries
+    # Load month data into working entries (only on initial load or month switch)
     current_month = st.session_state.current_month
     if current_month is not None:
-        st.session_state.income_entries = list(st.session_state.monthly_data[current_month].get("income", []))
-        st.session_state.expense_entries = list(st.session_state.monthly_data[current_month].get("expenses", []))
+        # Only reload from monthly_data if we haven't loaded this month yet
+        if st.session_state.get("_last_loaded_month") != current_month:
+            st.session_state.income_entries = list(st.session_state.monthly_data[current_month].get("income", []))
+            st.session_state.expense_entries = list(st.session_state.monthly_data[current_month].get("expenses", []))
+            st.session_state._last_loaded_month = current_month
     else:
-        # Annual mode: entries from first month or empty
+        # Annual mode: keep whatever is in session state
+        st.session_state._last_loaded_month = None
         if not st.session_state.income_entries and not st.session_state.expense_entries:
             pass  # keep whatever is in session state
 
     st.markdown("---")
     if st.button("💾 Save All", use_container_width=True, type="primary"):
-        # Save current entries to the right month
+        # Sync current entries back to monthly data before saving
         if current_month is not None:
             st.session_state.monthly_data[current_month]["income"] = list(st.session_state.income_entries)
             st.session_state.monthly_data[current_month]["expenses"] = list(st.session_state.expense_entries)
+        elif st.session_state.get("_last_loaded_month") is None:
+            # Annual mode: store entries across all months evenly
+            pass
         save_data({
             "inputs": {
                 "tax_year": tax_year,
@@ -223,6 +230,8 @@ with st.expander("➕ Add Income", expanded=True):
                 entry["miles"] = new_mileage
                 entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
             st.session_state.income_entries.append(entry)
+            if st.session_state.current_month is not None:
+                st.session_state.monthly_data[st.session_state.current_month]["income"] = list(st.session_state.income_entries)
             st.rerun()
     elif add_clicked and new_amount > 0.0:
         entry = {
@@ -235,6 +244,9 @@ with st.expander("➕ Add Income", expanded=True):
             entry["miles"] = new_mileage
             entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
         st.session_state.income_entries.append(entry)
+        # Sync to monthly data immediately
+        if st.session_state.current_month is not None:
+            st.session_state.monthly_data[st.session_state.current_month]["income"] = list(st.session_state.income_entries)
         st.rerun()
 
 # Display income entries
@@ -246,13 +258,15 @@ for i, entry in enumerate(st.session_state.income_entries):
     if entry.get("miles", 0) > 0:
         src_label += f' 🚗{entry["miles"]:,.0f}mi'
     cols[1].markdown(f'{src_label}')
-    cols[2].write(f"${entry['amount']:,.0f}")
+    cols[2].write(f"${entry['amount']:,.2f}")
     if entry.get("mileage_deduction", 0) > 0:
         cols[3].caption(f'−${entry["mileage_deduction"]:,.0f} mileage')
     else:
         cols[3].write("")
     if cols[4].button("🗑️", key=f"del_inc_{i}"):
         st.session_state.income_entries.pop(i)
+        if st.session_state.current_month is not None:
+            st.session_state.monthly_data[st.session_state.current_month]["income"] = list(st.session_state.income_entries)
         st.rerun()
 
 # ── Expense Section ────────────────────────────────────────────────
@@ -286,6 +300,8 @@ with st.expander("➕ Add Expense", expanded=True):
                 "amount": new_exp_amount,
                 "description": new_desc,
             })
+            if st.session_state.current_month is not None:
+                st.session_state.monthly_data[st.session_state.current_month]["expenses"] = list(st.session_state.expense_entries)
             st.rerun()
     elif add_exp_clicked and new_exp_amount > 0.0:
         st.session_state.expense_entries.append({
@@ -293,6 +309,8 @@ with st.expander("➕ Add Expense", expanded=True):
             "amount": float(new_exp_amount),
             "description": new_desc,
         })
+        if st.session_state.current_month is not None:
+            st.session_state.monthly_data[st.session_state.current_month]["expenses"] = list(st.session_state.expense_entries)
         st.rerun()
 
 # Display expense entries
@@ -300,9 +318,11 @@ for i, entry in enumerate(st.session_state.expense_entries):
     cols = st.columns([2, 2, 2, 1])
     cols[0].write(entry["category"])
     cols[1].write(entry.get("description", ""))
-    cols[2].write(f"${entry['amount']:,.0f}")
+    cols[2].write(f"${entry['amount']:,.2f}")
     if cols[3].button("🗑️", key=f"del_exp_{i}"):
         st.session_state.expense_entries.pop(i)
+        if st.session_state.current_month is not None:
+            st.session_state.monthly_data[st.session_state.current_month]["expenses"] = list(st.session_state.expense_entries)
         st.rerun()
 
 # ── Sync entries to monthly data ──────────────────────────────────
