@@ -12,7 +12,7 @@ CUSTOM_FILE = DATA_DIR / "custom_sources.json"
 
 DEFAULT_INCOME_SOURCES = ["Uber", "Empower", "Square", "Lyft", "FT Work", "PT Work", "Taxi", "Other"]
 MILEAGE_ELIGIBLE_SOURCES = {"Uber", "Lyft", "Empower", "Taxi"}
-IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70}
+IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70, 2026: 0.725}
 DEFAULT_EXPENSE_CATEGORIES = ["Subscription", "Gas", "Insurance", "Phone", "Car Payment", "Maintenance", "Supplies", "Other"]
 MONTH_NAMES = [
     "January", "February", "March", "April",
@@ -149,6 +149,7 @@ with st.sidebar:
     effective_inputs = {**last_inputs, **restore_defaults} if restore_defaults else last_inputs
     tax_year = 2026
     sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=effective_inputs.get("sl_interest", 2500), step=100)
+    st.caption(f"📍 Tax Year: **{tax_year}**")
     county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(effective_inputs.get("county", "Montgomery")))
     # Store sidebar values for auto_sync
     st.session_state._last_tax_year = tax_year
