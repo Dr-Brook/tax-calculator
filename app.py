@@ -76,7 +76,7 @@ def auto_sync():
     date_key = datetime.now().strftime("%Y-%m-%d")
     existing[date_key] = {
         "inputs": {
-            "tax_year": st.session_state.get("_last_tax_year", 2025),
+            "tax_year": st.session_state.get("_last_tax_year", 2026),
             "sl_interest": st.session_state.get("_last_sl", 2500),
             "county": st.session_state.get("_last_county", "Montgomery"),
             "monthly_data": {str(k): v for k, v in st.session_state.monthly_data.items()},
@@ -147,7 +147,7 @@ with st.sidebar:
     if st.session_state.get("_restore_sl") is not None:
         restore_defaults["sl_interest"] = st.session_state.pop("_restore_sl")
     effective_inputs = {**last_inputs, **restore_defaults} if restore_defaults else last_inputs
-    tax_year = st.selectbox("Tax Year", [2026, 2025, 2024], index=[2026, 2025, 2024].index(effective_inputs.get("tax_year", 2025)))
+    tax_year = 2026
     sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=effective_inputs.get("sl_interest", 2500), step=100)
     county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(effective_inputs.get("county", "Montgomery")))
     # Store sidebar values for auto_sync
@@ -211,7 +211,7 @@ with st.sidebar:
                 for k, v in md.items():
                     st.session_state.monthly_data[int(k)] = v
                 # Restore sidebar settings
-                st.session_state._restore_tax_year = inp.get("tax_year", 2025)
+                st.session_state._restore_tax_year = inp.get("tax_year", 2026)
                 st.session_state._restore_county = inp.get("county", "Montgomery")
                 st.session_state._restore_sl = inp.get("sl_interest", 2500)
                 # Reset month tracking so it reloads fresh
