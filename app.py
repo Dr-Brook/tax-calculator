@@ -115,9 +115,18 @@ with st.sidebar:
     st.header("⚙️ Settings")
     last_saved = SAVED.get(sorted(SAVED.keys())[-1], {}) if SAVED else {}
     last_inputs = last_saved.get("inputs", {}) if last_saved else {}
-    tax_year = st.selectbox("Tax Year", [2026, 2025, 2024], index=[2026, 2025, 2024].index(last_inputs.get("tax_year", 2025)))
-    sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=last_inputs.get("sl_interest", 2500), step=100)
-    county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(last_inputs.get("county", "Montgomery")))
+    # Handle restore from history button
+    restore_defaults = {}
+    if st.session_state.get("_restore_tax_year") is not None:
+        restore_defaults["tax_year"] = st.session_state.pop("_restore_tax_year")
+    if st.session_state.get("_restore_county") is not None:
+        restore_defaults["county"] = st.session_state.pop("_restore_county")
+    if st.session_state.get("_restore_sl") is not None:
+        restore_defaults["sl_interest"] = st.session_state.pop("_restore_sl")
+    effective_inputs = {**last_inputs, **restore_defaults} if restore_defaults else last_inputs
+    tax_year = st.selectbox("Tax Year", [2026, 2025, 2024], index=[2026, 2025, 2024].index(effective_inputs.get("tax_year", 2025)))
+    sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=effective_inputs.get("sl_interest", 2500), step=100)
+    county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(effective_inputs.get("county", "Montgomery")))
     st.caption(f"Local tax rate: {COUNTY_RATES[county]*100:.2f}%")
 
     st.markdown("---")
@@ -173,6 +182,25 @@ with st.sidebar:
                 md = inp.get("monthly_data", {})
                 for k, v in md.items():
                     st.session_state.monthly_data[int(k)] = v
+                # Restore sidebar settings
+                st.session_state._restore_tax_year = inp.get("tax_year", 2025)
+                st.session_state._restore_county = inp.get("county", "Montgomery")
+                st.session_state._restore_sl = inp.get("sl_interest", 2500)
+                # Load entries for current month or annual
+                current_month = st.session_state.current_month
+                if current_month is not None:
+                    st.session_state.income_entries = list(st.session_state.monthly_data[current_month].get("income", []))
+                    st.session_state.expense_entries = list(st.session_state.monthly_data[current_month].get("expenses", []))
+                else:
+                    # Annual mode: flatten all months
+                    all_income = []
+                    all_expenses = []
+                    for m_idx in range(12):
+                        m_d = st.session_state.monthly_data.get(m_idx, {"income": [], "expenses": []})
+                        all_income.extend(m_d.get("income", []))
+                        all_expenses.extend(m_d.get("expenses", []))
+                    st.session_state.income_entries = all_income
+                    st.session_state.expense_entries = all_expenses
                 st.rerun()
 
 # ── Income Section ─────────────────────────────────────────────────
