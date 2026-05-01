@@ -224,11 +224,11 @@ with st.expander("➕ Add Income", expanded=True):
                 entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
             st.session_state.income_entries.append(entry)
             st.rerun()
-    elif add_clicked and new_amount > 0:
+    elif add_clicked and new_amount > 0.0:
         entry = {
             "employment_type": new_type,
             "source": new_source,
-            "amount": new_amount,
+            "amount": float(new_amount),
         }
         if new_source in MILEAGE_ELIGIBLE_SOURCES and new_type == "1099" and new_mileage > 0:
             mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
@@ -287,10 +287,10 @@ with st.expander("➕ Add Expense", expanded=True):
                 "description": new_desc,
             })
             st.rerun()
-    elif add_exp_clicked and new_exp_amount > 0:
+    elif add_exp_clicked and new_exp_amount > 0.0:
         st.session_state.expense_entries.append({
             "category": new_cat,
-            "amount": new_exp_amount,
+            "amount": float(new_exp_amount),
             "description": new_desc,
         })
         st.rerun()
