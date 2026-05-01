@@ -234,7 +234,7 @@ with st.sidebar:
 # ── Income Section ─────────────────────────────────────────────────
 st.markdown('<p class="section-title">💰 Income</p>', unsafe_allow_html=True)
 
-income_sources = CUSTOM.get("income_sources", list(DEFAULT_INCOME_SOURCES))
+income_sources = sorted(CUSTOM.get("income_sources", list(DEFAULT_INCOME_SOURCES)))
 
 # Running total
 income_total = sum(e.get("amount", 0) or 0 for e in st.session_state.income_entries)
@@ -274,7 +274,7 @@ with st.expander("➕ Add Income", expanded=True):
             )
         if add_clicked and custom_source.strip():
             if custom_source.strip() not in income_sources:
-                CUSTOM["income_sources"] = income_sources + [custom_source.strip()]
+                CUSTOM["income_sources"] = sorted(income_sources + [custom_source.strip()])
                 save_custom_sources(CUSTOM)
             entry = {
                 "employment_type": new_type,
@@ -288,6 +288,7 @@ with st.expander("➕ Add Income", expanded=True):
             st.session_state.income_entries.append(entry)
             auto_sync()
             st.rerun()
+    elif add_clicked and new_amount > 0.0:
         entry = {
             "employment_type": new_type,
             "source": new_source,
@@ -323,7 +324,7 @@ for i, entry in enumerate(st.session_state.income_entries):
 # ── Expense Section ────────────────────────────────────────────────
 st.markdown('<p class="section-title">📉 Expenses</p>', unsafe_allow_html=True)
 
-expense_categories = CUSTOM.get("expense_categories", list(DEFAULT_EXPENSE_CATEGORIES))
+expense_categories = sorted(CUSTOM.get("expense_categories", list(DEFAULT_EXPENSE_CATEGORIES)))
 
 # Running total
 expense_total = sum(e.get("amount", 0) or 0 for e in st.session_state.expense_entries)
@@ -344,7 +345,7 @@ with st.expander("➕ Add Expense", expanded=True):
         custom_cat = st.text_input("Custom category name", key="custom_exp_cat")
         if add_exp_clicked and custom_cat.strip():
             if custom_cat.strip() not in expense_categories:
-                CUSTOM["expense_categories"] = expense_categories + [custom_cat.strip()]
+                CUSTOM["expense_categories"] = sorted(expense_categories + [custom_cat.strip()])
                 save_custom_sources(CUSTOM)
             st.session_state.expense_entries.append({
                 "category": custom_cat.strip(),
