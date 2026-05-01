@@ -188,7 +188,7 @@ with st.expander("➕ Add Income", expanded=True):
     add_cols = st.columns([1, 2, 2, 1])
     new_type = add_cols[0].selectbox("Type", ["1099", "W-2"], key="new_inc_type", label_visibility="collapsed")
     new_source = add_cols[1].selectbox("Source", income_sources, key="new_inc_source", label_visibility="collapsed")
-    new_amount = add_cols[2].number_input("Amount ($)", min_value=0, value=0, step=100, key="new_inc_amount", label_visibility="collapsed")
+    new_amount = add_cols[2].number_input("Amount ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f", key="new_inc_amount", label_visibility="collapsed")
     add_clicked = add_cols[3].button("➕", key="add_inc_btn")
 
     # Mileage input for rideshare/driving sources
@@ -272,7 +272,7 @@ with st.expander("➕ Add Expense", expanded=True):
     add_cols = st.columns([2, 2, 2, 1])
     new_cat = add_cols[0].selectbox("Category", expense_categories, key="new_exp_cat", label_visibility="collapsed")
     new_desc = add_cols[1].text_input("Description", key="new_exp_desc", label_visibility="collapsed", placeholder="Description")
-    new_exp_amount = add_cols[2].number_input("Amount ($)", min_value=0, value=0, step=10, key="new_exp_amount", label_visibility="collapsed")
+    new_exp_amount = add_cols[2].number_input("Amount ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f", key="new_exp_amount", label_visibility="collapsed")
     add_exp_clicked = add_cols[3].button("➕", key="add_exp_btn")
 
     if new_cat == "Other":
