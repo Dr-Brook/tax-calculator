@@ -12,7 +12,7 @@ CUSTOM_FILE = DATA_DIR / "custom_sources.json"
 
 DEFAULT_INCOME_SOURCES = ["Uber", "Empower", "Square", "Lyft", "FT Work", "PT Work", "Taxi", "Other"]
 MILEAGE_ELIGIBLE_SOURCES = {"Uber", "Lyft", "Empower", "Taxi"}
-IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70, 2026: 0.725}
+IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70, 2026: 0.72}
 DEFAULT_EXPENSE_CATEGORIES = ["Subscription", "Gas", "Insurance", "Phone", "Car Payment", "Maintenance", "Supplies", "Other"]
 MONTH_NAMES = [
     "January", "February", "March", "April",

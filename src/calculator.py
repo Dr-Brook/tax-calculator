@@ -80,7 +80,7 @@ SE_WAGE_BASE = 0.9235  # 92.35% of net SE income subject to SE tax
 SL_INTEREST_MAX = 2500
 SL_PHASEOUT_START_SINGLE = 80000
 SL_PHASEOUT_END_SINGLE = 95000
-IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70, 2026: 0.725}  # dollars per mile
+IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70, 2026: 0.72}  # dollars per mile
 
 
 def _apply_brackets(income, brackets):
