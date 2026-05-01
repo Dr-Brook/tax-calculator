@@ -115,7 +115,7 @@ with st.sidebar:
     st.header("⚙️ Settings")
     last_saved = SAVED.get(sorted(SAVED.keys())[-1], {}) if SAVED else {}
     last_inputs = last_saved.get("inputs", {}) if last_saved else {}
-    tax_year = st.selectbox("Tax Year", [2025, 2024], index=[2025, 2024].index(last_inputs.get("tax_year", 2025)))
+    tax_year = st.selectbox("Tax Year", [2026, 2025, 2024], index=[2026, 2025, 2024].index(last_inputs.get("tax_year", 2025)))
     sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=last_inputs.get("sl_interest", 2500), step=100)
     county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(last_inputs.get("county", "Montgomery")))
     st.caption(f"Local tax rate: {COUNTY_RATES[county]*100:.2f}%")

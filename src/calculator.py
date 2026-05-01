@@ -51,12 +51,36 @@ MD_BRACKETS_2025 = [
     (float("inf"), 0.0575),
 ]
 
+# ── 2026 Single brackets (OBBBA + IRS Rev Proc 2025-32) ────────────
+FED_BRACKETS_2026 = [
+    (12400, 0.10),
+    (50400, 0.12),
+    (105700, 0.22),
+    (201775, 0.24),
+    (256225, 0.32),
+    (640600, 0.35),
+    (float("inf"), 0.37),
+]
+
+STD_DEDUCTION_2026 = 16100
+
+MD_BRACKETS_2026 = [
+    (1000, 0.02),
+    (2000, 0.03),
+    (3000, 0.04),
+    (100000, 0.0475),
+    (125000, 0.05),
+    (150000, 0.0525),
+    (250000, 0.055),
+    (float("inf"), 0.0575),
+]
+
 SE_TAX_RATE = 0.153
 SE_WAGE_BASE = 0.9235  # 92.35% of net SE income subject to SE tax
 SL_INTEREST_MAX = 2500
 SL_PHASEOUT_START_SINGLE = 80000
 SL_PHASEOUT_END_SINGLE = 95000
-IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70}  # cents per mile
+IRS_MILEAGE_RATES = {2024: 0.67, 2025: 0.70, 2026: 0.725}  # dollars per mile
 
 
 def _apply_brackets(income, brackets):
@@ -128,9 +152,18 @@ def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_y
     If income_entries/expense_entries are provided directly, they represent annual totals.
     """
 
-    brackets_fed = FED_BRACKETS_2025 if tax_year == 2025 else FED_BRACKETS_2024
-    std_deduction = STD_DEDUCTION_2025 if tax_year == 2025 else STD_DEDUCTION_2024
-    brackets_md = MD_BRACKETS_2025 if tax_year == 2025 else MD_BRACKETS_2024
+    if tax_year == 2026:
+        brackets_fed = FED_BRACKETS_2026
+        std_deduction = STD_DEDUCTION_2026
+        brackets_md = MD_BRACKETS_2026
+    elif tax_year == 2025:
+        brackets_fed = FED_BRACKETS_2025
+        std_deduction = STD_DEDUCTION_2025
+        brackets_md = MD_BRACKETS_2025
+    else:
+        brackets_fed = FED_BRACKETS_2024
+        std_deduction = STD_DEDUCTION_2024
+        brackets_md = MD_BRACKETS_2024
     local_rate = COUNTY_RATES.get(county, 0.032)
 
     # ── Aggregate from monthly_data or from direct entries ───────
@@ -220,7 +253,9 @@ def calculate(income_entries, expense_entries, sl_interest_annual, county, tax_y
     # ── Quarterly payments ─────────────────────────────────────────
     quarterly = total_tax / 4
 
-    if tax_year == 2025:
+    if tax_year == 2026:
+        q_dates = ["Apr 15, 2026", "Jun 15, 2026", "Sep 15, 2026", "Jan 15, 2027"]
+    elif tax_year == 2025:
         q_dates = ["Apr 15, 2025", "Jun 15, 2025", "Sep 15, 2025", "Jan 15, 2026"]
     else:
         q_dates = ["Apr 15, 2024", "Jun 15, 2024", "Sep 15, 2024", "Jan 15, 2025"]
