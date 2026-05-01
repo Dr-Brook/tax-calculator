@@ -131,34 +131,42 @@ with st.sidebar:
 
     st.markdown("---")
     month_mode = st.selectbox("Entry Mode", ["Annual (same each month)"] + MONTH_NAMES, index=0)
-    if month_mode == "Annual (same each month)":
-        st.session_state.current_month = None
-    else:
-        st.session_state.current_month = MONTH_NAMES.index(month_mode)
+    new_month = None if month_mode == "Annual (same each month)" else MONTH_NAMES.index(month_mode)
+    prev_month = st.session_state.get("current_month")
 
-    # Load month data into working entries (only on initial load or month switch)
+    # ── Month switch: save current → load new ────────────────────
+    if new_month != prev_month:
+        # 1. Save current month's working entries back to monthly_data
+        if prev_month is not None:
+            st.session_state.monthly_data[prev_month]["income"] = list(st.session_state.income_entries)
+            st.session_state.monthly_data[prev_month]["expenses"] = list(st.session_state.expense_entries)
+        elif prev_month is None and st.session_state.get("_had_month_data"):
+            # Leaving annual mode: don't scatter, just keep monthly_data as-is
+            pass
+        # 2. Load new month's data into working entries
+        if new_month is not None:
+            st.session_state.income_entries = list(st.session_state.monthly_data[new_month].get("income", []))
+            st.session_state.expense_entries = list(st.session_state.monthly_data[new_month].get("expenses", []))
+        else:
+            # Annual mode: flatten all months into one view
+            all_income = []
+            all_expenses = []
+            for m_idx in range(12):
+                m_d = st.session_state.monthly_data.get(m_idx, {"income": [], "expenses": []})
+                all_income.extend(m_d.get("income", []))
+                all_expenses.extend(m_d.get("expenses", []))
+            st.session_state.income_entries = all_income
+            st.session_state.expense_entries = all_expenses
+        st.session_state.current_month = new_month
+        st.session_state._had_month_data = True
     current_month = st.session_state.current_month
-    if current_month is not None:
-        # Only reload from monthly_data if we haven't loaded this month yet
-        if st.session_state.get("_last_loaded_month") != current_month:
-            st.session_state.income_entries = list(st.session_state.monthly_data[current_month].get("income", []))
-            st.session_state.expense_entries = list(st.session_state.monthly_data[current_month].get("expenses", []))
-            st.session_state._last_loaded_month = current_month
-    else:
-        # Annual mode: keep whatever is in session state
-        st.session_state._last_loaded_month = None
-        if not st.session_state.income_entries and not st.session_state.expense_entries:
-            pass  # keep whatever is in session state
 
     st.markdown("---")
     if st.button("💾 Save All", use_container_width=True, type="primary"):
-        # Sync current entries back to monthly data before saving
+        # Sync current working entries back to monthly_data before saving
         if current_month is not None:
             st.session_state.monthly_data[current_month]["income"] = list(st.session_state.income_entries)
             st.session_state.monthly_data[current_month]["expenses"] = list(st.session_state.expense_entries)
-        elif st.session_state.get("_last_loaded_month") is None:
-            # Annual mode: store entries across all months evenly
-            pass
         save_data({
             "inputs": {
                 "tax_year": tax_year,
@@ -178,6 +186,11 @@ with st.sidebar:
             entry = SAVED[date_key]
             inp = entry.get("inputs", {})
             if st.button(f"📅 {date_key}", key=f"load_{date_key}"):
+                # Save current month before loading history
+                cur = st.session_state.get("current_month")
+                if cur is not None:
+                    st.session_state.monthly_data[cur]["income"] = list(st.session_state.income_entries)
+                    st.session_state.monthly_data[cur]["expenses"] = list(st.session_state.expense_entries)
                 # Restore monthly data
                 md = inp.get("monthly_data", {})
                 for k, v in md.items():
@@ -186,13 +199,13 @@ with st.sidebar:
                 st.session_state._restore_tax_year = inp.get("tax_year", 2025)
                 st.session_state._restore_county = inp.get("county", "Montgomery")
                 st.session_state._restore_sl = inp.get("sl_interest", 2500)
-                # Load entries for current month or annual
-                current_month = st.session_state.current_month
-                if current_month is not None:
-                    st.session_state.income_entries = list(st.session_state.monthly_data[current_month].get("income", []))
-                    st.session_state.expense_entries = list(st.session_state.monthly_data[current_month].get("expenses", []))
+                # Reset month tracking so it reloads fresh
+                st.session_state.pop("_had_month_data", None)
+                cur2 = st.session_state.get("current_month")
+                if cur2 is not None:
+                    st.session_state.income_entries = list(st.session_state.monthly_data[cur2].get("income", []))
+                    st.session_state.expense_entries = list(st.session_state.monthly_data[cur2].get("expenses", []))
                 else:
-                    # Annual mode: flatten all months
                     all_income = []
                     all_expenses = []
                     for m_idx in range(12):
