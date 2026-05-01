@@ -65,6 +65,21 @@ def save_data(data: dict):
     SAVE_FILE.write_text(json.dumps(existing, indent=2))
 
 
+def auto_sync():
+    """Sync current working entries back to monthly_data and save to disk."""
+    cur = st.session_state.get("current_month")
+    if cur is not None:
+        st.session_state.monthly_data[cur]["income"] = list(st.session_state.income_entries)
+        st.session_state.monthly_data[cur]["expenses"] = list(st.session_state.expense_entries)
+    # Always persist to disk
+    save_data({
+        "inputs": {
+            "monthly_data": {str(k): v for k, v in st.session_state.monthly_data.items()},
+        },
+    })
+    save_custom_sources(CUSTOM)
+
+
 CUSTOM = load_custom_sources()
 SAVED = load_saved_data()
 
@@ -163,19 +178,7 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("💾 Save All", use_container_width=True, type="primary"):
-        # Sync current working entries back to monthly_data before saving
-        if current_month is not None:
-            st.session_state.monthly_data[current_month]["income"] = list(st.session_state.income_entries)
-            st.session_state.monthly_data[current_month]["expenses"] = list(st.session_state.expense_entries)
-        save_data({
-            "inputs": {
-                "tax_year": tax_year,
-                "sl_interest": sl_interest,
-                "county": county,
-                "monthly_data": {str(k): v for k, v in st.session_state.monthly_data.items()},
-            },
-        })
-        save_custom_sources(CUSTOM)
+        auto_sync()
         st.success("✅ Saved!")
 
     # History
@@ -245,7 +248,7 @@ with st.expander("➕ Add Income", expanded=True):
         mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
         new_mileage = st.number_input(
             f"🚗 Miles driven for {new_source} (deduction: ${mileage_rate:.2f}/mile)",
-            min_value=0, value=0, step=100, key="new_inc_mileage"
+            min_value=0.0, value=0.0, step=0.1, format="%.1f", key="new_inc_mileage"
         )
 
     if new_source == "Other":
@@ -255,7 +258,7 @@ with st.expander("➕ Add Income", expanded=True):
             mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
             new_mileage = st.number_input(
                 f"🚗 Miles driven for {custom_source.strip()} (deduction: ${mileage_rate:.2f}/mile)",
-                min_value=0, value=0, step=100, key="custom_inc_mileage"
+                min_value=0.0, value=0.0, step=0.1, format="%.1f", key="custom_inc_mileage"
             )
         if add_clicked and custom_source.strip():
             if custom_source.strip() not in income_sources:
@@ -271,10 +274,8 @@ with st.expander("➕ Add Income", expanded=True):
                 entry["miles"] = new_mileage
                 entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
             st.session_state.income_entries.append(entry)
-            if st.session_state.current_month is not None:
-                st.session_state.monthly_data[st.session_state.current_month]["income"] = list(st.session_state.income_entries)
+            auto_sync()
             st.rerun()
-    elif add_clicked and new_amount > 0.0:
         entry = {
             "employment_type": new_type,
             "source": new_source,
@@ -285,9 +286,7 @@ with st.expander("➕ Add Income", expanded=True):
             entry["miles"] = new_mileage
             entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
         st.session_state.income_entries.append(entry)
-        # Sync to monthly data immediately
-        if st.session_state.current_month is not None:
-            st.session_state.monthly_data[st.session_state.current_month]["income"] = list(st.session_state.income_entries)
+        auto_sync()
         st.rerun()
 
 # Display income entries
@@ -297,7 +296,7 @@ for i, entry in enumerate(st.session_state.income_entries):
     cols[0].markdown(f'<span style="color:{type_color};font-weight:600">{entry["employment_type"]}</span>', unsafe_allow_html=True)
     src_label = entry["source"]
     if entry.get("miles", 0) > 0:
-        src_label += f' 🚗{entry["miles"]:,.0f}mi'
+        src_label += f' 🚗{entry["miles"]:,.1f}mi'
     cols[1].markdown(f'{src_label}')
     cols[2].write(f"${entry['amount']:,.2f}")
     if entry.get("mileage_deduction", 0) > 0:
@@ -306,8 +305,7 @@ for i, entry in enumerate(st.session_state.income_entries):
         cols[3].write("")
     if cols[4].button("🗑️", key=f"del_inc_{i}"):
         st.session_state.income_entries.pop(i)
-        if st.session_state.current_month is not None:
-            st.session_state.monthly_data[st.session_state.current_month]["income"] = list(st.session_state.income_entries)
+        auto_sync()
         st.rerun()
 
 # ── Expense Section ────────────────────────────────────────────────
@@ -341,8 +339,7 @@ with st.expander("➕ Add Expense", expanded=True):
                 "amount": new_exp_amount,
                 "description": new_desc,
             })
-            if st.session_state.current_month is not None:
-                st.session_state.monthly_data[st.session_state.current_month]["expenses"] = list(st.session_state.expense_entries)
+            auto_sync()
             st.rerun()
     elif add_exp_clicked and new_exp_amount > 0.0:
         st.session_state.expense_entries.append({
@@ -350,8 +347,7 @@ with st.expander("➕ Add Expense", expanded=True):
             "amount": float(new_exp_amount),
             "description": new_desc,
         })
-        if st.session_state.current_month is not None:
-            st.session_state.monthly_data[st.session_state.current_month]["expenses"] = list(st.session_state.expense_entries)
+        auto_sync()
         st.rerun()
 
 # Display expense entries
@@ -362,11 +358,10 @@ for i, entry in enumerate(st.session_state.expense_entries):
     cols[2].write(f"${entry['amount']:,.2f}")
     if cols[3].button("🗑️", key=f"del_exp_{i}"):
         st.session_state.expense_entries.pop(i)
-        if st.session_state.current_month is not None:
-            st.session_state.monthly_data[st.session_state.current_month]["expenses"] = list(st.session_state.expense_entries)
+        auto_sync()
         st.rerun()
 
-# ── Sync entries to monthly data ──────────────────────────────────
+# ── Sync entries to monthly data (always in sync via auto_sync) ─
 if current_month is not None:
     st.session_state.monthly_data[current_month]["income"] = list(st.session_state.income_entries)
     st.session_state.monthly_data[current_month]["expenses"] = list(st.session_state.expense_entries)
@@ -457,7 +452,7 @@ if r.get("mileage_deduction_total", 0) > 0:
     <div class="card" style="border-left:4px solid #0D7377">
         <h3>🚗 Mileage Deduction</h3>
         <div class="value">−{fmt(r['mileage_deduction_total'])}</div>
-        <div class="sub">{total_miles:,.0f} miles × ${mileage_rate:.2f}/mile (IRS {tax_year} rate) — deducted from 1099 income</div>
+        <div class="sub">{total_miles:,.1f} miles × ${mileage_rate:.2f}/mile (IRS {tax_year} rate) — deducted from 1099 income</div>
     </div>
     """, unsafe_allow_html=True)
 
