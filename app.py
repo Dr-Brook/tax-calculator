@@ -71,12 +71,20 @@ def auto_sync():
     if cur is not None:
         st.session_state.monthly_data[cur]["income"] = list(st.session_state.income_entries)
         st.session_state.monthly_data[cur]["expenses"] = list(st.session_state.expense_entries)
-    # Always persist to disk
-    save_data({
+    # Persist to disk (merge with existing saves, don't overwrite)
+    existing = load_saved_data()
+    date_key = datetime.now().strftime("%Y-%m-%d")
+    existing[date_key] = {
         "inputs": {
+            "tax_year": st.session_state.get("_last_tax_year", 2025),
+            "sl_interest": st.session_state.get("_last_sl", 2500),
+            "county": st.session_state.get("_last_county", "Montgomery"),
             "monthly_data": {str(k): v for k, v in st.session_state.monthly_data.items()},
         },
-    })
+        "saved_at": datetime.now().isoformat(),
+    }
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    SAVE_FILE.write_text(json.dumps(existing, indent=2))
     save_custom_sources(CUSTOM)
 
 
@@ -142,6 +150,10 @@ with st.sidebar:
     tax_year = st.selectbox("Tax Year", [2026, 2025, 2024], index=[2026, 2025, 2024].index(effective_inputs.get("tax_year", 2025)))
     sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=effective_inputs.get("sl_interest", 2500), step=100)
     county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(effective_inputs.get("county", "Montgomery")))
+    # Store sidebar values for auto_sync
+    st.session_state._last_tax_year = tax_year
+    st.session_state._last_sl = sl_interest
+    st.session_state._last_county = county
     st.caption(f"Local tax rate: {COUNTY_RATES[county]*100:.2f}%")
 
     st.markdown("---")
