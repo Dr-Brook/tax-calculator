@@ -1,2 +1,2 @@
 streamlit>=1.31.0
-plotly>=5.18.0
+plotly>=5.18.0pocketbase>=0.16.0

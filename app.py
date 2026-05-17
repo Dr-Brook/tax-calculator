@@ -5,9 +5,15 @@ from datetime import datetime
 from src.calculator import calculate
 from src.counties import COUNTY_RATES
 
-# ── Data persistence ─────────────────────────────────────────────
+from pb_auth import pb_login_form, get_pb_client, get_pb_user_id, pb_logout_button, pb_query
+
+APP_NAME = "tax-calculator"
+
+# ─── Auth (must be before page config) ────────────────────────────────────────
+pb_login_form()
+
+# ─── Data persistence via Pocketbase ─────────────────────────────────────────
 DATA_DIR = Path(__file__).parent / "data"
-SAVE_FILE = DATA_DIR / "saved_data.json"
 CUSTOM_FILE = DATA_DIR / "custom_sources.json"
 
 DEFAULT_INCOME_SOURCES = ["Uber", "Empower", "Square", "Lyft", "FT Work", "PT Work", "Taxi", "Other"]
@@ -26,7 +32,6 @@ def load_custom_sources():
     if CUSTOM_FILE.exists():
         try:
             data = json.loads(CUSTOM_FILE.read_text())
-            # Merge: keep defaults for any missing keys or empty lists
             for key in ["income_sources", "expense_categories"]:
                 if key not in data or not data.get(key):
                     data[key] = defaults[key]
@@ -41,70 +46,101 @@ def save_custom_sources(data):
     CUSTOM_FILE.write_text(json.dumps(data, indent=2))
 
 
-def load_saved_data():
-    if SAVE_FILE.exists():
-        try:
-            return json.loads(SAVE_FILE.read_text())
-        except (json.JSONDecodeError, KeyError):
-            pass
-    return {}
+# ─── Pocketbase helpers ────────────────────────────────────────────────────────
+def pb_load_saved_data():
+    """Load saved calculations from Pocketbase for current user."""
+    client = get_pb_client()
+    user_id = get_pb_user_id()
+    if not client or not user_id:
+        return {}
+    try:
+        items = pb_query("saved_calculations", filter=f"user='{user_id}' && app_name='{APP_NAME}'", sort="-created")
+        result = {}
+        for item in items:
+            inputs = json.loads(item.get("inputs", "{}")) if item.get("inputs") else {}
+            date_key = inputs.get("date_key", item.get("created", "")[:10])
+            result[date_key] = {
+                "id": item.get("id", ""),
+                "inputs": inputs,
+                "results": json.loads(item.get("results", "{}")) if item.get("results") else {},
+                "saved_at": item.get("created", ""),
+            }
+        return result
+    except Exception:
+        return {}
 
 
-def save_data(data: dict):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    existing = load_saved_data()
+def pb_save_data(data: dict):
+    """Save calculation data to Pocketbase."""
+    client = get_pb_client()
+    user_id = get_pb_user_id()
+    if not client or not user_id:
+        return
     date_key = datetime.now().strftime("%Y-%m-%d")
-    existing[date_key] = {
-        "inputs": data["inputs"],
-        "saved_at": datetime.now().isoformat(),
-    }
-    if len(existing) > 50:
-        keys = sorted(existing.keys())
-        for k in keys[:-50]:
-            del existing[k]
-    SAVE_FILE.write_text(json.dumps(existing, indent=2))
+    try:
+        existing = pb_query("saved_calculations", filter=f"user='{user_id}' && app_name='{APP_NAME}'")
+        inputs_data = {
+            "date_key": date_key,
+            "tax_year": data.get("inputs", {}).get("tax_year", 2026),
+            "sl_interest": data.get("inputs", {}).get("sl_interest", 2500),
+            "county": data.get("inputs", {}).get("county", "Montgomery"),
+            "monthly_data": data.get("inputs", {}).get("monthly_data", {}),
+        }
+        # Find today's record
+        today_record_id = None
+        for item in existing:
+            r_inputs = json.loads(item.get("inputs", "{}")) if item.get("inputs") else {}
+            if r_inputs.get("date_key") == date_key:
+                today_record_id = item.get("id")
+                break
+
+        if today_record_id:
+            # Update existing
+            client.collection("saved_calculations").update(today_record_id, {
+                "inputs": json.dumps(inputs_data),
+                "results": json.dumps(data.get("results", {})),
+            })
+        else:
+            # Create new
+            client.collection("saved_calculations").create({
+                "user": user_id,
+                "app_name": APP_NAME,
+                "calc_type": "monthly",
+                "inputs": json.dumps(inputs_data),
+                "results": json.dumps(data.get("results", {})),
+            })
+    except Exception as e:
+        st.error(f"Save failed: {e}")
 
 
-def auto_sync():
-    """Sync current working entries back to monthly_data and save to disk."""
-    cur = st.session_state.get("current_month")
-    if cur is not None:
-        st.session_state.monthly_data[cur]["income"] = list(st.session_state.income_entries)
-        st.session_state.monthly_data[cur]["expenses"] = list(st.session_state.expense_entries)
-    # Persist to disk (merge with existing saves, don't overwrite)
-    existing = load_saved_data()
-    date_key = datetime.now().strftime("%Y-%m-%d")
-    existing[date_key] = {
-        "inputs": {
-            "tax_year": st.session_state.get("_last_tax_year", 2026),
-            "sl_interest": st.session_state.get("_last_sl", 2500),
-            "county": st.session_state.get("_last_county", "Montgomery"),
-            "monthly_data": {str(k): v for k, v in st.session_state.monthly_data.items()},
-        },
-        "saved_at": datetime.now().isoformat(),
-    }
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SAVE_FILE.write_text(json.dumps(existing, indent=2))
-    save_custom_sources(CUSTOM)
+def pb_delete_data(record_id):
+    """Delete a saved calculation."""
+    client = get_pb_client()
+    if not client:
+        return
+    try:
+        client.collection("saved_calculations").delete(record_id)
+    except Exception:
+        pass
 
 
 CUSTOM = load_custom_sources()
-SAVED = load_saved_data()
+SAVED = pb_load_saved_data()
 
-# ── Session state init ────────────────────────────────────────────
+# ─── Session state init ────────────────────────────────────────────────────
 if "income_entries" not in st.session_state:
     st.session_state.income_entries = []
 if "expense_entries" not in st.session_state:
     st.session_state.expense_entries = []
 if "current_month" not in st.session_state:
-    st.session_state.current_month = None  # None = annual mode
+    st.session_state.current_month = 0
 if "monthly_data" not in st.session_state:
     st.session_state.monthly_data = {i: {"income": [], "expenses": []} for i in range(12)}
 
-# ── Page config ────────────────────────────────────────────────────
+# ─── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(page_title="1099 Tax Calculator", page_icon="🧮", layout="wide")
 
-# ── Custom CSS ─────────────────────────────────────────────────────
+# ─── Custom CSS ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 :root { --navy: #1A1A2E; --teal: #0D7377; --teal-light: #14A3A8; --light-bg: #F7F9FC; }
@@ -129,16 +165,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header ─────────────────────────────────────────────────────────
+# ── Header ─────────────────────────────────────────────────────────────────
 st.markdown("""<div class="header-bar"><h1>🧮 1099 / W-2 Tax Calculator</h1>
 <p>Track multiple income sources & expenses — estimate your federal, state & local taxes</p></div>""", unsafe_allow_html=True)
 
-# ── Sidebar ────────────────────────────────────────────────────────
+# ── Sidebar ────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Settings")
+    pb_logout_button()
+    st.markdown("---")
+
     last_saved = SAVED.get(sorted(SAVED.keys())[-1], {}) if SAVED else {}
     last_inputs = last_saved.get("inputs", {}) if last_saved else {}
-    # Handle restore from history button
     restore_defaults = {}
     if st.session_state.get("_restore_tax_year") is not None:
         restore_defaults["tax_year"] = st.session_state.pop("_restore_tax_year")
@@ -151,47 +189,40 @@ with st.sidebar:
     sl_interest = st.number_input("Student loan interest paid/year ($)", min_value=0, max_value=10000, value=effective_inputs.get("sl_interest", 2500), step=100)
     st.caption(f"📍 Tax Year: **{tax_year}**")
     county = st.selectbox("Maryland County", list(COUNTY_RATES.keys()), index=list(COUNTY_RATES.keys()).index(effective_inputs.get("county", "Montgomery")))
-    # Store sidebar values for auto_sync
     st.session_state._last_tax_year = tax_year
     st.session_state._last_sl = sl_interest
     st.session_state._last_county = county
     st.caption(f"Local tax rate: {COUNTY_RATES[county]*100:.2f}%")
 
     st.markdown("---")
-    month_mode = st.selectbox("Entry Mode", ["Annual (same each month)"] + MONTH_NAMES, index=0)
-    new_month = None if month_mode == "Annual (same each month)" else MONTH_NAMES.index(month_mode)
+    month_mode = st.selectbox("Entry Mode", MONTH_NAMES, index=st.session_state.get("current_month", 0))
+    new_month = MONTH_NAMES.index(month_mode)
     prev_month = st.session_state.get("current_month")
 
-    # ── Month switch: save current → load new ────────────────────
     if new_month != prev_month:
-        # 1. Save current month's working entries back to monthly_data
         if prev_month is not None:
             st.session_state.monthly_data[prev_month]["income"] = list(st.session_state.income_entries)
             st.session_state.monthly_data[prev_month]["expenses"] = list(st.session_state.expense_entries)
-        elif prev_month is None and st.session_state.get("_had_month_data"):
-            # Leaving annual mode: don't scatter, just keep monthly_data as-is
-            pass
-        # 2. Load new month's data into working entries
-        if new_month is not None:
-            st.session_state.income_entries = list(st.session_state.monthly_data[new_month].get("income", []))
-            st.session_state.expense_entries = list(st.session_state.monthly_data[new_month].get("expenses", []))
-        else:
-            # Annual mode: flatten all months into one view
-            all_income = []
-            all_expenses = []
-            for m_idx in range(12):
-                m_d = st.session_state.monthly_data.get(m_idx, {"income": [], "expenses": []})
-                all_income.extend(m_d.get("income", []))
-                all_expenses.extend(m_d.get("expenses", []))
-            st.session_state.income_entries = all_income
-            st.session_state.expense_entries = all_expenses
+        st.session_state.income_entries = list(st.session_state.monthly_data[new_month].get("income", []))
+        st.session_state.expense_entries = list(st.session_state.monthly_data[new_month].get("expenses", []))
         st.session_state.current_month = new_month
-        st.session_state._had_month_data = True
     current_month = st.session_state.current_month
 
     st.markdown("---")
     if st.button("💾 Save All", use_container_width=True, type="primary"):
-        auto_sync()
+        # Sync current month
+        cur = st.session_state.get("current_month")
+        if cur is not None:
+            st.session_state.monthly_data[cur]["income"] = list(st.session_state.income_entries)
+            st.session_state.monthly_data[cur]["expenses"] = list(st.session_state.expense_entries)
+        pb_save_data({
+            "inputs": {
+                "tax_year": tax_year,
+                "sl_interest": sl_interest,
+                "county": county,
+                "monthly_data": {str(k): v for k, v in st.session_state.monthly_data.items()},
+            },
+        })
         st.success("✅ Saved!")
 
     # History
@@ -201,43 +232,34 @@ with st.sidebar:
         for date_key in sorted(SAVED.keys(), reverse=True)[:5]:
             entry = SAVED[date_key]
             inp = entry.get("inputs", {})
-            if st.button(f"📅 {date_key}", key=f"load_{date_key}"):
-                # Save current month before loading history
-                cur = st.session_state.get("current_month")
-                if cur is not None:
-                    st.session_state.monthly_data[cur]["income"] = list(st.session_state.income_entries)
-                    st.session_state.monthly_data[cur]["expenses"] = list(st.session_state.expense_entries)
-                # Restore monthly data
-                md = inp.get("monthly_data", {})
-                for k, v in md.items():
-                    st.session_state.monthly_data[int(k)] = v
-                # Restore sidebar settings
-                st.session_state._restore_tax_year = inp.get("tax_year", 2026)
-                st.session_state._restore_county = inp.get("county", "Montgomery")
-                st.session_state._restore_sl = inp.get("sl_interest", 2500)
-                # Reset month tracking so it reloads fresh
-                st.session_state.pop("_had_month_data", None)
-                cur2 = st.session_state.get("current_month")
-                if cur2 is not None:
+            record_id = entry.get("id")
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                if st.button(f"📅 {date_key}", key=f"load_{date_key}"):
+                    cur = st.session_state.get("current_month")
+                    if cur is not None:
+                        st.session_state.monthly_data[cur]["income"] = list(st.session_state.income_entries)
+                        st.session_state.monthly_data[cur]["expenses"] = list(st.session_state.expense_entries)
+                    md = inp.get("monthly_data", {})
+                    for k, v in md.items():
+                        st.session_state.monthly_data[int(k)] = v
+                    st.session_state._restore_tax_year = inp.get("tax_year", 2026)
+                    st.session_state._restore_county = inp.get("county", "Montgomery")
+                    st.session_state._restore_sl = inp.get("sl_interest", 2500)
+                    cur2 = st.session_state.get("current_month") or 0
                     st.session_state.income_entries = list(st.session_state.monthly_data[cur2].get("income", []))
                     st.session_state.expense_entries = list(st.session_state.monthly_data[cur2].get("expenses", []))
-                else:
-                    all_income = []
-                    all_expenses = []
-                    for m_idx in range(12):
-                        m_d = st.session_state.monthly_data.get(m_idx, {"income": [], "expenses": []})
-                        all_income.extend(m_d.get("income", []))
-                        all_expenses.extend(m_d.get("expenses", []))
-                    st.session_state.income_entries = all_income
-                    st.session_state.expense_entries = all_expenses
-                st.rerun()
+                    st.rerun()
+            with col2:
+                if record_id and st.button("🗑️", key=f"del_{date_key}"):
+                    pb_delete_data(record_id)
+                    st.rerun()
 
-# ── Income Section ─────────────────────────────────────────────────
+# ── Income Section ─────────────────────────────────────────────────────────
 st.markdown('<p class="section-title">💰 Income</p>', unsafe_allow_html=True)
 
 income_sources = sorted(CUSTOM.get("income_sources", list(DEFAULT_INCOME_SOURCES)))
 
-# Running total
 income_total = sum(e.get("amount", 0) or 0 for e in st.session_state.income_entries)
 income_1099_total = sum(e.get("amount", 0) or 0 for e in st.session_state.income_entries if e.get("employment_type") == "1099")
 income_w2_total = sum(e.get("amount", 0) or 0 for e in st.session_state.income_entries if e.get("employment_type") == "W-2")
@@ -247,7 +269,6 @@ col1.metric("Total Income", f"${income_total:,.0f}")
 col2.metric("1099 Income", f"${income_1099_total:,.0f}")
 col3.metric("W-2 Income", f"${income_w2_total:,.0f}")
 
-# Add income entry
 with st.expander("➕ Add Income", expanded=True):
     add_cols = st.columns([1, 2, 2, 1])
     new_type = add_cols[0].selectbox("Type", ["1099", "W-2"], key="new_inc_type", label_visibility="collapsed")
@@ -255,7 +276,6 @@ with st.expander("➕ Add Income", expanded=True):
     new_amount = add_cols[2].number_input("Amount ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f", key="new_inc_amount", label_visibility="collapsed")
     add_clicked = add_cols[3].button("➕", key="add_inc_btn")
 
-    # Mileage input for rideshare/driving sources
     new_mileage = 0
     if new_source in MILEAGE_ELIGIBLE_SOURCES and new_type == "1099":
         mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
@@ -287,7 +307,6 @@ with st.expander("➕ Add Income", expanded=True):
                 entry["miles"] = new_mileage
                 entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
             st.session_state.income_entries.append(entry)
-            auto_sync()
             st.rerun()
     elif add_clicked and new_amount > 0.0:
         entry = {
@@ -300,10 +319,8 @@ with st.expander("➕ Add Income", expanded=True):
             entry["miles"] = new_mileage
             entry["mileage_deduction"] = round(new_mileage * mileage_rate, 2)
         st.session_state.income_entries.append(entry)
-        auto_sync()
         st.rerun()
 
-# Display income entries
 for i, entry in enumerate(st.session_state.income_entries):
     cols = st.columns([1, 2, 2, 1, 1])
     type_color = "#16a34a" if entry["employment_type"] == "1099" else "#2563eb"
@@ -319,22 +336,19 @@ for i, entry in enumerate(st.session_state.income_entries):
         cols[3].write("")
     if cols[4].button("🗑️", key=f"del_inc_{i}"):
         st.session_state.income_entries.pop(i)
-        auto_sync()
         st.rerun()
 
-# ── Expense Section ────────────────────────────────────────────────
+# ── Expense Section ────────────────────────────────────────────────────────
 st.markdown('<p class="section-title">📉 Expenses</p>', unsafe_allow_html=True)
 
 expense_categories = sorted(CUSTOM.get("expense_categories", list(DEFAULT_EXPENSE_CATEGORIES)))
 
-# Running total
 expense_total = sum(e.get("amount", 0) or 0 for e in st.session_state.expense_entries)
 
 col1, col2 = st.columns(2)
 col1.metric("Total Expenses", f"${expense_total:,.0f}")
 col2.metric("Net (Income - Expenses)", f"${income_total - expense_total:,.0f}")
 
-# Add expense entry
 with st.expander("➕ Add Expense", expanded=True):
     add_cols = st.columns([2, 2, 2, 1])
     new_cat = add_cols[0].selectbox("Category", expense_categories, key="new_exp_cat", label_visibility="collapsed")
@@ -353,7 +367,6 @@ with st.expander("➕ Add Expense", expanded=True):
                 "amount": new_exp_amount,
                 "description": new_desc,
             })
-            auto_sync()
             st.rerun()
     elif add_exp_clicked and new_exp_amount > 0.0:
         st.session_state.expense_entries.append({
@@ -361,10 +374,8 @@ with st.expander("➕ Add Expense", expanded=True):
             "amount": float(new_exp_amount),
             "description": new_desc,
         })
-        auto_sync()
         st.rerun()
 
-# Display expense entries
 for i, entry in enumerate(st.session_state.expense_entries):
     cols = st.columns([2, 2, 2, 1])
     cols[0].write(entry["category"])
@@ -372,25 +383,22 @@ for i, entry in enumerate(st.session_state.expense_entries):
     cols[2].write(f"${entry['amount']:,.2f}")
     if cols[3].button("🗑️", key=f"del_exp_{i}"):
         st.session_state.expense_entries.pop(i)
-        auto_sync()
         st.rerun()
 
-# ── Sync entries to monthly data (always in sync via auto_sync) ─
+# ── Sync entries to monthly data ──
 if current_month is not None:
     st.session_state.monthly_data[current_month]["income"] = list(st.session_state.income_entries)
     st.session_state.monthly_data[current_month]["expenses"] = list(st.session_state.expense_entries)
 else:
-    # Annual mode: apply same entries to all 12 months
     for i in range(12):
         st.session_state.monthly_data[i]["income"] = list(st.session_state.income_entries)
         st.session_state.monthly_data[i]["expenses"] = list(st.session_state.expense_entries)
 
-# ── Calculate ─────────────────────────────────────────────────────
+# ── Calculate ─────────────────────────────────────────────────────────────
 income_entries = st.session_state.income_entries
 expense_entries = st.session_state.expense_entries
 
 monthly_data = st.session_state.monthly_data
-# Always calculate based on ALL monthly data for accurate annual tax
 has_monthly_data = any(
     m.get("income") or m.get("expenses")
     for m in monthly_data.values()
@@ -407,7 +415,7 @@ else:
 
 def fmt(v): return f"${v:,.0f}" if abs(v) >= 1 else f"${v:,.2f}"
 
-# ── Set Aside Banner (per-month view) ───────────────────────────────
+# ── Set Aside Banner ──
 if current_month is not None and r.get("per_month") and r["annual_gross"] > 0:
     m = r["per_month"][current_month]
     if m["income"] > 0:
@@ -426,7 +434,7 @@ if current_month is not None and r.get("per_month") and r["annual_gross"] > 0:
         </div>
         """, unsafe_allow_html=True)
 
-# ── Annual set-aside summary ────────────────────────────────────────
+# ── Annual set-aside summary ──
 if r.get("per_month"):
     total_set_aside = sum(m.get("set_aside", 0) for m in r["per_month"])
     st.markdown(f"""
@@ -437,8 +445,7 @@ if r.get("per_month"):
     </div>
     """, unsafe_allow_html=True)
 
-
-# ── Annual summary cards ────────────────────────────────────────────
+# ── Annual summary cards ──
 st.markdown('<p class="section-title">Annual Tax Summary</p>', unsafe_allow_html=True)
 cols = st.columns(4)
 cards = [
@@ -450,14 +457,13 @@ cards = [
 for col, (title, value, sub) in zip(cols, cards):
     col.markdown(f"""<div class="card"><h3>{title}</h3><div class="value">{value}</div><div class="sub">{sub}</div></div>""", unsafe_allow_html=True)
 
-# ── Income breakdown ───────────────────────────────────────────────
+# ── Income breakdown ──
 st.markdown('<p class="section-title">Income Breakdown</p>', unsafe_allow_html=True)
 inc_cols = st.columns(3)
 inc_cols[0].metric("1099 Income", fmt(r["total_1099_income"]), f"net: {fmt(r['net_1099_income'])}")
 inc_cols[1].metric("W-2 Income", fmt(r["total_w2_income"]), "no SE tax")
 inc_cols[2].metric("SE Tax", fmt(r["se_tax"]), "15.3% × 92.35%")
 
-# Mileage deduction summary
 if r.get("mileage_deduction_total", 0) > 0:
     mileage_rate = IRS_MILEAGE_RATES.get(tax_year, 0.70)
     total_miles = sum(e.get("miles", 0) or 0 for e in st.session_state.income_entries if e.get("employment_type") == "1099")
@@ -469,7 +475,7 @@ if r.get("mileage_deduction_total", 0) > 0:
     </div>
     """, unsafe_allow_html=True)
 
-# ── Per-month breakdown ────────────────────────────────────────────
+# ── Per-month breakdown ──
 if r.get("per_month"):
     has_monthly_variety = any(m.get("income", 0) > 0 for m in r["per_month"])
     if has_monthly_variety:
@@ -494,7 +500,6 @@ if r.get("per_month"):
             pm_df = pd.DataFrame(pm_rows)
             st.dataframe(pm_df, use_container_width=True, hide_index=True)
 
-        # Monthly chart
         import plotly.graph_objects as go
         fig_monthly = go.Figure()
         months_short = [m["month"][:3] for m in r["per_month"]]
@@ -503,7 +508,7 @@ if r.get("per_month"):
         fig_monthly.update_layout(title="Monthly Income vs Take-Home", barmode="group", height=350, margin=dict(l=0, r=0, t=40, b=0))
         st.plotly_chart(fig_monthly, use_container_width=True)
 
-# ── Step-by-step calculation ──────────────────────────────────────
+# ── Step-by-step calculation ──
 st.markdown('<p class="section-title">Step-by-Step Calculation (Annual)</p>', unsafe_allow_html=True)
 st.caption("All figures below are annual totals. Your monthly set-aside = annual tax ÷ 12.")
 
@@ -535,14 +540,14 @@ for label, value, note in steps:
 
 st.markdown(f'<div class="card">{step_html}</div>', unsafe_allow_html=True)
 
-# ── Quarterly payment schedule ─────────────────────────────────────
+# ── Quarterly payment schedule ──
 st.markdown('<p class="section-title">Quarterly Estimated Tax Payments</p>', unsafe_allow_html=True)
 q_cols = st.columns(4)
 labels = ["Q1", "Q2", "Q3", "Q4"]
 for i, (col, label) in enumerate(zip(q_cols, labels)):
     col.markdown(f"""<div class="card"><h3>{label}</h3><div class="value">{fmt(r['quarterly_payment'])}</div><div class="sub">Due {r['q_dates'][i]}</div></div>""", unsafe_allow_html=True)
 
-# ── Tax bracket visualization ──────────────────────────────────────
+# ── Tax bracket visualization ──
 st.markdown('<p class="section-title">Federal Tax Bracket Breakdown</p>', unsafe_allow_html=True)
 import plotly.graph_objects as go
 
@@ -562,10 +567,9 @@ fig.update_layout(title="Federal Tax by Bracket", xaxis_title="Bracket", yaxis_t
     height=350, margin=dict(l=0, r=0, t=40, b=0), showlegend=False)
 st.plotly_chart(fig, use_container_width=True)
 
-# ── Export report ──────────────────────────────────────────────────
+# ── Export report ──
 st.markdown('<p class="section-title">Export Report</p>', unsafe_allow_html=True)
 
-# Build income source list for report
 inc_lines = []
 for e in income_entries:
     inc_lines.append(f"  {e['employment_type']} - {e['source']}: {fmt(e['amount'])}/mo")
@@ -624,5 +628,5 @@ st.text_area("Report", report_text, height=300)
 
 st.download_button("📥 Download Report as Text", report_text, file_name=f"tax_estimate_{tax_year}.txt", mime="text/plain")
 
-# ── Disclaimer ─────────────────────────────────────────────────────
+# ── Disclaimer ──
 st.markdown("""<div class="disclaimer">⚠️ <strong>Disclaimer:</strong> This calculator provides estimates only and is not tax advice. Tax laws change, individual situations vary, and this tool may not account for all deductions, credits, or special rules. Consult a qualified tax professional for your specific situation.</div>""", unsafe_allow_html=True)
