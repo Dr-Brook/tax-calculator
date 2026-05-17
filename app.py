@@ -9,8 +9,11 @@ from pb_auth import pb_login_form, get_pb_client, get_pb_user_id, pb_logout_butt
 
 APP_NAME = "tax-calculator"
 
-# ─── Auth (must be before page config) ────────────────────────────────────────
-pb_login_form()
+# ─── Page config (must be first Streamlit call) ────────────────────────────────
+st.set_page_config(page_title="1099 Tax Calculator", page_icon="🧮", layout="wide")
+
+# ─── Auth (optional — login in sidebar to save/sync) ────────────────────────────
+pb_login_form(required=False)
 
 # ─── Data persistence via Pocketbase ─────────────────────────────────────────
 DATA_DIR = Path(__file__).parent / "data"
@@ -137,8 +140,7 @@ if "current_month" not in st.session_state:
 if "monthly_data" not in st.session_state:
     st.session_state.monthly_data = {i: {"income": [], "expenses": []} for i in range(12)}
 
-# ─── Page config ────────────────────────────────────────────────────────────
-st.set_page_config(page_title="1099 Tax Calculator", page_icon="🧮", layout="wide")
+# ─── Page config (moved to top, before auth) ────────────────────────────────
 
 # ─── Custom CSS ─────────────────────────────────────────────────────────────
 st.markdown("""
